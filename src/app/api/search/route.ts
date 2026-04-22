@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
     let searched = await searchShorts(
       apiKey,
       keyword,
-      Math.min(50, Math.max(1, Number(searchMax))),
+      Math.min(500, Math.max(1, Number(searchMax))),
       region,
       language,
       publishedAfter,
