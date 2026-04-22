@@ -34,6 +34,7 @@ export default function Home() {
   const [threshold, setThreshold] = useState(3);
   const [region, setRegion] = useState(DEFAULT_REGION);
   const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
+  const [publishedWithinDays, setPublishedWithinDays] = useState(90);
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<Result[]>([]);
   const [summary, setSummary] = useState<{
@@ -70,6 +71,7 @@ export default function Home() {
           outlierThreshold: threshold,
           region,
           language,
+          publishedWithinDays,
         }),
       });
       const data: ApiResponse = await res.json();
@@ -149,6 +151,24 @@ export default function Home() {
                 onChange={(e) => setThreshold(parseFloat(e.target.value))}
                 className="w-full accent-red-500"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">업로드 기간</label>
+              <select
+                value={publishedWithinDays}
+                onChange={(e) =>
+                  setPublishedWithinDays(parseInt(e.target.value, 10))
+                }
+                className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
+              >
+                <option value={7}>최근 1주일</option>
+                <option value={30}>최근 1개월</option>
+                <option value={90}>최근 3개월</option>
+                <option value={180}>최근 6개월</option>
+                <option value={365}>최근 1년</option>
+                <option value={0}>전체 기간</option>
+              </select>
             </div>
 
             <div>

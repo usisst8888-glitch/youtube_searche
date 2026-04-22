@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
       outlierThreshold = 3.0,
       region = "KR",
       language = "ko",
+      publishedWithinDays = 90,
     } = body;
 
     const apiKey = process.env.YOUTUBE_API_KEY;
@@ -42,12 +43,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const days = Number(publishedWithinDays);
+    const publishedAfter =
+      days > 0
+        ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+        : undefined;
+
     let searched = await searchShorts(
       apiKey,
       keyword,
       Math.min(50, Math.max(1, Number(searchMax))),
       region,
       language,
+      publishedAfter,
     );
 
     if (searched.length === 0) {

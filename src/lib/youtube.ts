@@ -82,6 +82,7 @@ export async function searchShorts(
   max: number,
   region: string,
   lang: string,
+  publishedAfter?: string,
 ): Promise<SearchItem[]> {
   const results: SearchItem[] = [];
   let pageToken = "";
@@ -96,6 +97,7 @@ export async function searchShorts(
       regionCode: region,
       relevanceLanguage: lang,
     };
+    if (publishedAfter) params.publishedAfter = publishedAfter;
     if (pageToken) params.pageToken = pageToken;
     const data = await ytFetch("search", params, apiKey);
     for (const item of data.items || []) {
