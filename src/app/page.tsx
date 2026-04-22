@@ -224,23 +224,18 @@ export default function Home() {
               <label className="block text-sm font-medium mb-1">
                 검색 결과 수:{" "}
                 <span className="font-bold text-red-500">{searchMax}</span>
-                {searchMax >= 200 && (
-                  <span className="ml-2 text-xs text-amber-600 dark:text-amber-400">
-                    ⚠️ quota 소비 큼 ({Math.ceil(searchMax / 50) * 100}+ units)
-                  </span>
-                )}
               </label>
               <input
                 type="range"
                 min={10}
-                max={500}
+                max={100}
                 step={10}
                 value={searchMax}
                 onChange={(e) => setSearchMax(parseInt(e.target.value, 10))}
                 className="w-full accent-red-500"
               />
               <div className="mt-1 flex flex-wrap gap-1">
-                {[50, 100, 200, 300, 500].map((n) => (
+                {[25, 50, 75, 100].map((n) => (
                   <button
                     key={n}
                     type="button"
@@ -364,7 +359,7 @@ export default function Home() {
             </button>
             {loading && (
               <span className="text-sm text-zinc-500">
-                YouTube API 호출 중, {searchMax <= 100 ? "10~30초" : searchMax <= 300 ? "30초~1분" : "최대 1분"} 소요
+                YouTube API 호출 중, 10~30초 소요
               </span>
             )}
           </div>
