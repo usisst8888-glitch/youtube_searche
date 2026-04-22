@@ -51,7 +51,35 @@ export type OutlierResult = {
   publishedAt: string;
   url: string;
   thumbnail: string;
+  subscriberCount: number;
+  subscriberHidden: boolean;
 };
+
+export type ChannelInfo = {
+  uploads: string;
+  name: string;
+  subscriberCount: number;
+  subscriberHidden: boolean;
+};
+
+export const VIDEO_CATEGORIES_KR: { id: string; name: string }[] = [
+  { id: "", name: "전체 (카테고리 필터 없음)" },
+  { id: "1", name: "영화 & 애니메이션" },
+  { id: "2", name: "자동차" },
+  { id: "10", name: "음악" },
+  { id: "15", name: "동물" },
+  { id: "17", name: "스포츠" },
+  { id: "19", name: "여행 & 이벤트" },
+  { id: "20", name: "게임" },
+  { id: "22", name: "인물 & 블로그" },
+  { id: "23", name: "코미디" },
+  { id: "24", name: "엔터테인먼트" },
+  { id: "25", name: "뉴스 & 정치" },
+  { id: "26", name: "노하우 & 스타일" },
+  { id: "27", name: "교육" },
+  { id: "28", name: "과학 & 기술" },
+  { id: "29", name: "비영리 & 사회운동" },
+];
 
 const YT_BASE = "https://www.googleapis.com/youtube/v3";
 
@@ -83,13 +111,13 @@ export async function searchShorts(
   region: string,
   lang: string,
   publishedAfter?: string,
+  videoCategoryId?: string,
 ): Promise<SearchItem[]> {
   const results: SearchItem[] = [];
   let pageToken = "";
   while (results.length < max) {
     const params: Record<string, string> = {
       part: "snippet",
-      q: keyword,
       type: "video",
       videoDuration: "short",
       maxResults: String(Math.min(50, max - results.length)),
@@ -97,7 +125,9 @@ export async function searchShorts(
       regionCode: region,
       relevanceLanguage: lang,
     };
+    if (keyword) params.q = keyword;
     if (publishedAfter) params.publishedAfter = publishedAfter;
+    if (videoCategoryId) params.videoCategoryId = videoCategoryId;
     if (pageToken) params.pageToken = pageToken;
     const data = await ytFetch("search", params, apiKey);
     for (const item of data.items || []) {
@@ -153,23 +183,28 @@ export async function getVideoStats(
 export async function getChannelUploads(
   apiKey: string,
   channelIds: string[],
-): Promise<Record<string, { uploads: string; name: string }>> {
-  const info: Record<string, { uploads: string; name: string }> = {};
+): Promise<Record<string, ChannelInfo>> {
+  const info: Record<string, ChannelInfo> = {};
   for (let i = 0; i < channelIds.length; i += 50) {
     const batch = channelIds.slice(i, i + 50);
     if (batch.length === 0) continue;
     const data = await ytFetch(
       "channels",
       {
-        part: "contentDetails,snippet",
+        part: "contentDetails,snippet,statistics",
         id: batch.join(","),
       },
       apiKey,
     );
     for (const item of data.items || []) {
+      const hidden = item.statistics?.hiddenSubscriberCount ?? false;
       info[item.id] = {
         uploads: item.contentDetails.relatedPlaylists.uploads,
         name: item.snippet.title,
+        subscriberCount: hidden
+          ? 0
+          : parseInt(item.statistics?.subscriberCount || "0", 10),
+        subscriberHidden: hidden,
       };
     }
   }

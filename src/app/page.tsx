@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { VIDEO_CATEGORIES_KR } from "@/lib/youtube";
 
 const DEFAULT_EXCLUDE = [
   "뉴스",
@@ -36,6 +37,8 @@ type Result = {
   publishedAt: string;
   url: string;
   thumbnail: string;
+  subscriberCount: number;
+  subscriberHidden: boolean;
 };
 
 type ApiResponse = {
@@ -57,6 +60,8 @@ export default function Home() {
   const [region, setRegion] = useState(DEFAULT_REGION);
   const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
   const [publishedWithinDays, setPublishedWithinDays] = useState(90);
+  const [videoCategoryId, setVideoCategoryId] = useState("");
+  const [maxSubscribers, setMaxSubscribers] = useState(0);
   const [excludeKeywordsText, setExcludeKeywordsText] = useState(
     DEFAULT_EXCLUDE.join(", "),
   );
@@ -81,8 +86,8 @@ export default function Home() {
     setResults([]);
     setSummary(null);
 
-    if (!keyword.trim()) {
-      setError("키워드를 입력하세요.");
+    if (!keyword.trim() && !videoCategoryId) {
+      setError("키워드 또는 카테고리 중 하나는 선택하세요.");
       return;
     }
     localStorage.setItem("yt_last_keyword", keyword);
@@ -106,6 +111,8 @@ export default function Home() {
           language,
           publishedWithinDays,
           excludeKeywords,
+          videoCategoryId,
+          maxSubscribers,
         }),
       });
       const data: ApiResponse = await res.json();
@@ -142,7 +149,12 @@ export default function Home() {
         <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm mb-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="md:col-span-2">
-              <label className="block text-sm font-medium mb-1">검색 키워드</label>
+              <label className="block text-sm font-medium mb-1">
+                검색 키워드
+                <span className="ml-2 text-xs text-zinc-500">
+                  (카테고리만 선택해도 검색 가능)
+                </span>
+              </label>
               <input
                 type="text"
                 value={keyword}
@@ -151,8 +163,61 @@ export default function Home() {
                   if (e.key === "Enter" && !loading) handleSearch();
                 }}
                 className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500"
-                placeholder="예: 로지텍 마우스"
+                placeholder="예: 로지텍 마우스 (생략 가능)"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">카테고리</label>
+              <select
+                value={videoCategoryId}
+                onChange={(e) => setVideoCategoryId(e.target.value)}
+                className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
+              >
+                {VIDEO_CATEGORIES_KR.map((c) => (
+                  <option key={c.id || "all"} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                구독자 상한
+                <span className="ml-2 text-xs text-zinc-500">
+                  (0 = 제한 없음)
+                </span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  step={1000}
+                  value={maxSubscribers}
+                  onChange={(e) =>
+                    setMaxSubscribers(parseInt(e.target.value, 10) || 0)
+                  }
+                  className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
+                  placeholder="예: 10000"
+                />
+              </div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {[0, 1000, 10000, 100000, 1000000].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setMaxSubscribers(n)}
+                    className={`text-xs px-2 py-0.5 rounded ${
+                      maxSubscribers === n
+                        ? "bg-red-500 text-white"
+                        : "bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600"
+                    }`}
+                  >
+                    {n === 0 ? "무제한" : `${n.toLocaleString()} 이하`}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div>
@@ -337,6 +402,7 @@ export default function Home() {
                       <th className="text-left p-3 font-medium">스코어</th>
                       <th className="text-left p-3 font-medium">쇼츠</th>
                       <th className="text-left p-3 font-medium">채널</th>
+                      <th className="text-right p-3 font-medium">구독자</th>
                       <th className="text-right p-3 font-medium">조회수</th>
                       <th className="text-right p-3 font-medium">채널 중앙값</th>
                       <th className="text-right p-3 font-medium">업로드</th>
@@ -384,6 +450,11 @@ export default function Home() {
                           </td>
                           <td className="p-3 text-zinc-600 dark:text-zinc-400">
                             {r.channelName}
+                          </td>
+                          <td className="p-3 text-right text-zinc-500 whitespace-nowrap">
+                            {r.subscriberHidden
+                              ? "비공개"
+                              : r.subscriberCount.toLocaleString()}
                           </td>
                           <td className="p-3 text-right font-medium">
                             {r.views.toLocaleString()}

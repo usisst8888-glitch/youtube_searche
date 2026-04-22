@@ -21,18 +21,22 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const {
-      keyword,
+      keyword = "",
       searchMax = 50,
       outlierThreshold = 3.0,
       region = "KR",
       language = "ko",
       publishedWithinDays = 90,
       excludeKeywords,
+      videoCategoryId = "",
+      maxSubscribers = 0,
     } = body;
 
     const excludeList: string[] = Array.isArray(excludeKeywords)
       ? excludeKeywords
       : DEFAULT_EXCLUDE_KEYWORDS;
+
+    const maxSubs = Math.max(0, Number(maxSubscribers) || 0);
 
     const apiKey = process.env.YOUTUBE_API_KEY;
     if (!apiKey) {
@@ -44,9 +48,9 @@ export async function POST(req: NextRequest) {
         { status: 500 },
       );
     }
-    if (!keyword) {
+    if (!keyword && !videoCategoryId) {
       return NextResponse.json(
-        { error: "키워드를 입력하세요." },
+        { error: "키워드 또는 카테고리 중 하나는 선택하세요." },
         { status: 400 },
       );
     }
@@ -64,6 +68,7 @@ export async function POST(req: NextRequest) {
       region,
       language,
       publishedAfter,
+      videoCategoryId || undefined,
     );
 
     if (searched.length === 0) {
@@ -102,13 +107,22 @@ export async function POST(req: NextRequest) {
     );
     const channelInfo = await getChannelUploads(apiKey, uniqueChannels);
 
+    const channelInfoFiltered: typeof channelInfo = {};
+    for (const [chId, info] of Object.entries(channelInfo)) {
+      if (maxSubs > 0) {
+        if (info.subscriberHidden) continue;
+        if (info.subscriberCount > maxSubs) continue;
+      }
+      channelInfoFiltered[chId] = info;
+    }
+
     const baseline: Record<
       string,
       { median: number; max: number; count: number }
     > = {};
 
     await Promise.all(
-      Object.entries(channelInfo).map(async ([chId, info]) => {
+      Object.entries(channelInfoFiltered).map(async ([chId, info]) => {
         try {
           const recentIds = await getRecentVideoIds(
             apiKey,
@@ -141,6 +155,7 @@ export async function POST(req: NextRequest) {
       .map((s) => {
         const stats = searchedStats[s.videoId];
         const b = baseline[s.channelId];
+        const ch = channelInfo[s.channelId];
         return {
           channelName: s.channelTitle,
           title: stats.title,
@@ -153,6 +168,8 @@ export async function POST(req: NextRequest) {
           publishedAt: s.publishedAt.slice(0, 10),
           url: `https://youtube.com/shorts/${s.videoId}`,
           thumbnail: stats.thumbnail,
+          subscriberCount: ch?.subscriberCount ?? 0,
+          subscriberHidden: ch?.subscriberHidden ?? false,
         };
       })
       .sort((a, b) => b.outlierScore - a.outlierScore);
