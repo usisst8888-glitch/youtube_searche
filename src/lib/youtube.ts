@@ -176,6 +176,30 @@ export async function getChannelUploads(
   return info;
 }
 
+export async function verifyIsShort(videoId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`https://www.youtube.com/shorts/${videoId}`, {
+      method: "HEAD",
+      redirect: "manual",
+    });
+    return res.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+export async function filterActualShorts<T extends { videoId: string }>(
+  items: T[],
+): Promise<T[]> {
+  const checks = await Promise.all(
+    items.map(async (item) => ({
+      item,
+      isShort: await verifyIsShort(item.videoId),
+    })),
+  );
+  return checks.filter((c) => c.isShort).map((c) => c.item);
+}
+
 export async function getRecentVideoIds(
   apiKey: string,
   playlistId: string,

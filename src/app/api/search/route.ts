@@ -4,6 +4,7 @@ import {
   getVideoStats,
   getChannelUploads,
   getRecentVideoIds,
+  filterActualShorts,
   median,
   OutlierResult,
 } from "@/lib/youtube";
@@ -73,6 +74,7 @@ export async function POST(req: NextRequest) {
       searched.map((s) => s.videoId),
     );
     searched = searched.filter((s) => searchedStats[s.videoId]?.isShorts);
+    searched = await filterActualShorts(searched);
 
     if (searched.length === 0) {
       return NextResponse.json({
@@ -80,7 +82,7 @@ export async function POST(req: NextRequest) {
         outlierCount: 0,
         threshold: outlierThreshold,
         results: [],
-        message: "3분 이하 쇼츠가 없습니다.",
+        message: "실제 쇼츠 영상이 없습니다.",
       });
     }
 
