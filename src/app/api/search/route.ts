@@ -18,7 +18,6 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const {
-      apiKey,
       keyword,
       searchMax = 50,
       outlierThreshold = 3.0,
@@ -26,9 +25,19 @@ export async function POST(req: NextRequest) {
       language = "ko",
     } = body;
 
-    if (!apiKey || !keyword) {
+    const apiKey = process.env.YOUTUBE_API_KEY;
+    if (!apiKey) {
       return NextResponse.json(
-        { error: "API 키와 키워드를 입력하세요." },
+        {
+          error:
+            "서버에 YOUTUBE_API_KEY가 설정되지 않았습니다. .env.local 또는 Vercel 환경변수를 확인하세요.",
+        },
+        { status: 500 },
+      );
+    }
+    if (!keyword) {
+      return NextResponse.json(
+        { error: "키워드를 입력하세요." },
         { status: 400 },
       );
     }

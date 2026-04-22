@@ -25,13 +25,15 @@ type ApiResponse = {
   error?: string;
 };
 
+const DEFAULT_REGION = process.env.NEXT_PUBLIC_DEFAULT_REGION || "KR";
+const DEFAULT_LANGUAGE = process.env.NEXT_PUBLIC_DEFAULT_LANGUAGE || "ko";
+
 export default function Home() {
-  const [apiKey, setApiKey] = useState("");
   const [keyword, setKeyword] = useState("");
   const [searchMax, setSearchMax] = useState(50);
   const [threshold, setThreshold] = useState(3);
-  const [region, setRegion] = useState("KR");
-  const [language, setLanguage] = useState("ko");
+  const [region, setRegion] = useState(DEFAULT_REGION);
+  const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<Result[]>([]);
   const [summary, setSummary] = useState<{
@@ -42,8 +44,8 @@ export default function Home() {
   const [onlyOutliers, setOnlyOutliers] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem("yt_api_key");
-    if (saved) setApiKey(saved);
+    const savedKeyword = localStorage.getItem("yt_last_keyword");
+    if (savedKeyword) setKeyword(savedKeyword);
   }, []);
 
   const handleSearch = async () => {
@@ -51,11 +53,11 @@ export default function Home() {
     setResults([]);
     setSummary(null);
 
-    if (!apiKey.trim() || !keyword.trim()) {
-      setError("API 키와 키워드를 입력하세요.");
+    if (!keyword.trim()) {
+      setError("키워드를 입력하세요.");
       return;
     }
-    localStorage.setItem("yt_api_key", apiKey);
+    localStorage.setItem("yt_last_keyword", keyword);
 
     setLoading(true);
     try {
@@ -63,7 +65,6 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          apiKey,
           keyword,
           searchMax,
           outlierThreshold: threshold,
@@ -104,22 +105,6 @@ export default function Home() {
 
         <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm mb-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium mb-1">
-                YouTube Data API v3 키
-                <span className="ml-2 text-xs text-zinc-500">
-                  (브라우저 로컬에만 저장됨)
-                </span>
-              </label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500"
-                placeholder="AIzaSy..."
-              />
-            </div>
-
             <div className="md:col-span-2">
               <label className="block text-sm font-medium mb-1">검색 키워드</label>
               <input
@@ -219,20 +204,17 @@ export default function Home() {
             )}
           </div>
 
-          {!apiKey && (
-            <p className="mt-3 text-xs text-zinc-500">
-              API 키 발급:{" "}
-              <a
-                href="https://console.cloud.google.com/apis/library/youtube.googleapis.com"
-                target="_blank"
-                rel="noreferrer"
-                className="text-blue-500 hover:underline"
-              >
-                Google Cloud Console
-              </a>{" "}
-              → YouTube Data API v3 활성화 → 사용자 인증 정보 → API 키 생성
-            </p>
-          )}
+          <p className="mt-3 text-xs text-zinc-500">
+            API 키는 서버 환경변수(<code className="font-mono">YOUTUBE_API_KEY</code>)에서 읽어옵니다. 키 발급:{" "}
+            <a
+              href="https://console.cloud.google.com/apis/library/youtube.googleapis.com"
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue-500 hover:underline"
+            >
+              Google Cloud Console
+            </a>
+          </p>
         </section>
 
         {error && (
