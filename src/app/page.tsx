@@ -2,6 +2,28 @@
 
 import { useState, useEffect } from "react";
 
+const DEFAULT_EXCLUDE = [
+  "뉴스",
+  "news",
+  "방송",
+  "공식",
+  "official",
+  "KBS",
+  "MBC",
+  "SBS",
+  "JTBC",
+  "YTN",
+  "MBN",
+  "TV조선",
+  "채널A",
+  "연합",
+  "일보",
+  "신문",
+  "CNN",
+  "BBC",
+  "NHK",
+];
+
 type Result = {
   channelName: string;
   title: string;
@@ -35,6 +57,9 @@ export default function Home() {
   const [region, setRegion] = useState(DEFAULT_REGION);
   const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
   const [publishedWithinDays, setPublishedWithinDays] = useState(90);
+  const [excludeKeywordsText, setExcludeKeywordsText] = useState(
+    DEFAULT_EXCLUDE.join(", "),
+  );
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<Result[]>([]);
   const [summary, setSummary] = useState<{
@@ -47,6 +72,8 @@ export default function Home() {
   useEffect(() => {
     const savedKeyword = localStorage.getItem("yt_last_keyword");
     if (savedKeyword) setKeyword(savedKeyword);
+    const savedExcludes = localStorage.getItem("yt_exclude_keywords");
+    if (savedExcludes) setExcludeKeywordsText(savedExcludes);
   }, []);
 
   const handleSearch = async () => {
@@ -59,6 +86,12 @@ export default function Home() {
       return;
     }
     localStorage.setItem("yt_last_keyword", keyword);
+    localStorage.setItem("yt_exclude_keywords", excludeKeywordsText);
+
+    const excludeKeywords = excludeKeywordsText
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     setLoading(true);
     try {
@@ -72,6 +105,7 @@ export default function Home() {
           region,
           language,
           publishedWithinDays,
+          excludeKeywords,
         }),
       });
       const data: ApiResponse = await res.json();
@@ -151,6 +185,31 @@ export default function Home() {
                 onChange={(e) => setThreshold(parseFloat(e.target.value))}
                 className="w-full accent-red-500"
               />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium mb-1">
+                제외할 채널 키워드
+                <span className="ml-2 text-xs text-zinc-500">
+                  (쉼표로 구분, 채널명에 포함되면 제외)
+                </span>
+              </label>
+              <textarea
+                value={excludeKeywordsText}
+                onChange={(e) => setExcludeKeywordsText(e.target.value)}
+                rows={2}
+                className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                placeholder="뉴스, news, 방송, 공식, ..."
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setExcludeKeywordsText(DEFAULT_EXCLUDE.join(", "))
+                }
+                className="mt-1 text-xs text-blue-500 hover:underline"
+              >
+                기본값으로 되돌리기
+              </button>
             </div>
 
             <div>

@@ -5,6 +5,8 @@ import {
   getChannelUploads,
   getRecentVideoIds,
   filterActualShorts,
+  isExcludedChannel,
+  DEFAULT_EXCLUDE_KEYWORDS,
   median,
   OutlierResult,
 } from "@/lib/youtube";
@@ -25,7 +27,12 @@ export async function POST(req: NextRequest) {
       region = "KR",
       language = "ko",
       publishedWithinDays = 90,
+      excludeKeywords,
     } = body;
+
+    const excludeList: string[] = Array.isArray(excludeKeywords)
+      ? excludeKeywords
+      : DEFAULT_EXCLUDE_KEYWORDS;
 
     const apiKey = process.env.YOUTUBE_API_KEY;
     if (!apiKey) {
@@ -69,6 +76,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    searched = searched.filter(
+      (s) => !isExcludedChannel(s.channelTitle, excludeList),
+    );
+
     const searchedStats = await getVideoStats(
       apiKey,
       searched.map((s) => s.videoId),
@@ -82,7 +93,7 @@ export async function POST(req: NextRequest) {
         outlierCount: 0,
         threshold: outlierThreshold,
         results: [],
-        message: "실제 쇼츠 영상이 없습니다.",
+        message: "실제 쇼츠 영상이 없습니다 (필터 적용 후).",
       });
     }
 

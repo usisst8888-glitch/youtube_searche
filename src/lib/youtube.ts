@@ -176,6 +176,41 @@ export async function getChannelUploads(
   return info;
 }
 
+export const DEFAULT_EXCLUDE_KEYWORDS = [
+  "뉴스",
+  "news",
+  "방송",
+  "공식",
+  "official",
+  "KBS",
+  "MBC",
+  "SBS",
+  "JTBC",
+  "YTN",
+  "MBN",
+  "TV조선",
+  "채널A",
+  "연합",
+  "일보",
+  "신문",
+  "CNN",
+  "BBC",
+  "NHK",
+];
+
+export function isExcludedChannel(
+  channelName: string,
+  keywords: string[],
+): boolean {
+  if (!channelName) return false;
+  const lower = channelName.toLowerCase();
+  return keywords.some((kw) => {
+    const trimmed = kw.trim();
+    if (!trimmed) return false;
+    return lower.includes(trimmed.toLowerCase());
+  });
+}
+
 export async function verifyIsShort(videoId: string): Promise<boolean> {
   try {
     const res = await fetch(`https://www.youtube.com/shorts/${videoId}`, {
