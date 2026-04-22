@@ -41,6 +41,12 @@ type Result = {
   subscriberHidden: boolean;
 };
 
+type CacheStats = {
+  hits: number;
+  misses: number;
+  totalChannelsCached: number;
+};
+
 type ApiResponse = {
   total: number;
   outlierCount: number;
@@ -48,6 +54,7 @@ type ApiResponse = {
   results: Result[];
   message?: string;
   error?: string;
+  cacheStats?: CacheStats;
 };
 
 const DEFAULT_REGION = process.env.NEXT_PUBLIC_DEFAULT_REGION || "KR";
@@ -70,6 +77,7 @@ export default function Home() {
   const [summary, setSummary] = useState<{
     total: number;
     outlierCount: number;
+    cacheStats?: CacheStats;
   } | null>(null);
   const [error, setError] = useState("");
   const [onlyOutliers, setOnlyOutliers] = useState(false);
@@ -118,7 +126,11 @@ export default function Home() {
       const data: ApiResponse = await res.json();
       if (!res.ok) throw new Error(data.error || `오류 (${res.status})`);
       setResults(data.results);
-      setSummary({ total: data.total, outlierCount: data.outlierCount });
+      setSummary({
+        total: data.total,
+        outlierCount: data.outlierCount,
+        cacheStats: data.cacheStats,
+      });
       if (data.results.length === 0 && data.message) {
         setError(data.message);
       }
@@ -386,13 +398,33 @@ export default function Home() {
         {summary && (
           <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-              <div className="text-lg">
-                총{" "}
-                <span className="font-bold text-2xl">{summary.total}</span>개 쇼츠 중{" "}
-                <span className="font-bold text-2xl text-red-500">
-                  🔥 {summary.outlierCount}
-                </span>
-                개 떡상 ({threshold}배 이상)
+              <div>
+                <div className="text-lg">
+                  총{" "}
+                  <span className="font-bold text-2xl">{summary.total}</span>개 쇼츠 중{" "}
+                  <span className="font-bold text-2xl text-red-500">
+                    🔥 {summary.outlierCount}
+                  </span>
+                  개 떡상 ({threshold}배 이상)
+                </div>
+                {summary.cacheStats && (
+                  <div className="text-xs text-zinc-500 mt-1">
+                    캐시 히트 {summary.cacheStats.hits} / 미스 {summary.cacheStats.misses}
+                    {summary.cacheStats.hits + summary.cacheStats.misses > 0 && (
+                      <>
+                        {" "}
+                        ({Math.round(
+                          (summary.cacheStats.hits /
+                            (summary.cacheStats.hits +
+                              summary.cacheStats.misses)) *
+                            100,
+                        )}
+                        % 히트)
+                      </>
+                    )}
+                    · 전체 캐시 {summary.cacheStats.totalChannelsCached}개 채널
+                  </div>
+                )}
               </div>
               <label className="flex items-center gap-2 text-sm cursor-pointer">
                 <input

@@ -10,6 +10,7 @@ import {
   median,
   OutlierResult,
 } from "@/lib/youtube";
+import { channelBaselineCache } from "@/lib/cache";
 
 export const maxDuration = 60;
 export const runtime = "nodejs";
@@ -121,28 +122,45 @@ export async function POST(req: NextRequest) {
       { median: number; max: number; count: number }
     > = {};
 
+    let cacheHits = 0;
+    let cacheMisses = 0;
+
     await Promise.all(
       Object.entries(channelInfoFiltered).map(async ([chId, info]) => {
+        const cached = channelBaselineCache.get(chId);
+        if (cached !== undefined) {
+          cacheHits++;
+          if (cached) baseline[chId] = cached;
+          return;
+        }
+        cacheMisses++;
         try {
           const recentIds = await getRecentVideoIds(
             apiKey,
             info.uploads,
             CHANNEL_FETCH,
           );
-          if (!recentIds.length) return;
+          if (!recentIds.length) {
+            channelBaselineCache.set(chId, null);
+            return;
+          }
           const recentStats = await getVideoStats(apiKey, recentIds);
           const shortsViews = Object.values(recentStats)
             .filter((v) => v.isShorts && v.views > 0)
             .map((v) => v.views);
           if (shortsViews.length >= MIN_SHORTS_FOR_BASELINE) {
-            baseline[chId] = {
+            const entry = {
               median: median(shortsViews),
               max: Math.max(...shortsViews),
               count: shortsViews.length,
             };
+            baseline[chId] = entry;
+            channelBaselineCache.set(chId, entry);
+          } else {
+            channelBaselineCache.set(chId, null);
           }
         } catch {
-          // skip channel on error
+          // skip channel on error (do not cache errors)
         }
       }),
     );
@@ -183,6 +201,11 @@ export async function POST(req: NextRequest) {
       outlierCount,
       threshold: outlierThreshold,
       results: rows,
+      cacheStats: {
+        hits: cacheHits,
+        misses: cacheMisses,
+        totalChannelsCached: channelBaselineCache.size(),
+      },
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "서버 오류";
