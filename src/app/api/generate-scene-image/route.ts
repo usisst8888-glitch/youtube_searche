@@ -72,13 +72,16 @@ ${emotion}
 ${
   hasProduct
     ? `
-## ⚠️ CRITICAL RULE 2 — EXACT PRODUCT MATCH
-- The FIRST image(s) attached at the beginning of this prompt are reference images of the ACTUAL product.
-- If the product appears in this scene, it MUST be the EXACT same product as those reference images.
-- Preserve the product's exact shape, color, form factor, proportions, and distinctive features.
-- DO NOT substitute with a similar/generic product. DO NOT invent a product.
-- DO render the product in the ${stylePrompt} art style — but keep its identity recognizable.
-- If the scene doesn't naturally need the product visible, it's OK to keep it out of frame rather than adding a wrong product.`
+## ⚠️ CRITICAL RULE 2 — PRODUCT MUST APPEAR (EXACT MATCH)
+- The reference images labeled "ACTUAL PRODUCT" are the product that MUST appear in this scene.
+- The product is REQUIRED in every single scene — it can be held by the character, placed on a surface, in the background, or the focal subject. Prominent or subtle is fine, but it MUST be visible somewhere in the frame.
+- The product must be the EXACT same one as the reference images:
+  • Same shape, silhouette, color, material, distinctive features
+  • Same logo/branding position (rendered visually without readable text)
+  • Same proportions and form factor
+- DO NOT substitute, generalize, or invent a different product.
+- Render the product in the ${stylePrompt} art style — but keep its identity instantly recognizable.
+- If the narration doesn't explicitly mention the product, still place it naturally in the environment (on a desk, held, nearby) so every scene visually contains the product.`
     : ""
 }
 
