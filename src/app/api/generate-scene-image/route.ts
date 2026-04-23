@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Content, Part } from "@google/genai";
-import { getGeminiClient } from "@/lib/gemini";
+import { getGeminiClient, withRetry } from "@/lib/gemini";
 
 export const maxDuration = 60;
 export const runtime = "nodejs";
@@ -80,10 +80,12 @@ Return a single image.`;
 
     const contents: Content[] = [{ role: "user", parts }];
 
-    const response = await ai.models.generateContent({
-      model: IMAGE_MODEL,
-      contents,
-    });
+    const response = await withRetry(() =>
+      ai.models.generateContent({
+        model: IMAGE_MODEL,
+        contents,
+      }),
+    );
 
     const candidates = response.candidates || [];
     for (const cand of candidates) {

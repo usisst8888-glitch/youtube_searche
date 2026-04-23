@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Content, Part } from "@google/genai";
-import { getGeminiClient, FLASH_MODEL } from "@/lib/gemini";
+import { getGeminiClient, FLASH_MODEL, withRetry } from "@/lib/gemini";
 import {
   extractVideoId,
   tryFetchTranscript,
@@ -155,13 +155,15 @@ export async function POST(req: NextRequest) {
       },
     ];
 
-    const researchResponse = await ai.models.generateContent({
-      model: FLASH_MODEL,
-      contents: researchContents,
-      config: {
-        tools: [{ googleSearch: {} }],
-      },
-    });
+    const researchResponse = await withRetry(() =>
+      ai.models.generateContent({
+        model: FLASH_MODEL,
+        contents: researchContents,
+        config: {
+          tools: [{ googleSearch: {} }],
+        },
+      }),
+    );
 
     const research = researchResponse.text || "";
     if (!research) {
@@ -181,14 +183,16 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const scriptResponse = await ai.models.generateContent({
-      model: FLASH_MODEL,
-      contents: [{ role: "user", parts: scriptParts }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: ANALYSIS_SCHEMA,
-      },
-    });
+    const scriptResponse = await withRetry(() =>
+      ai.models.generateContent({
+        model: FLASH_MODEL,
+        contents: [{ role: "user", parts: scriptParts }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: ANALYSIS_SCHEMA,
+        },
+      }),
+    );
 
     const text = scriptResponse.text;
     if (!text) {
