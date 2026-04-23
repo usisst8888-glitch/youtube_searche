@@ -5,7 +5,7 @@ import { getGeminiClient, withRetry } from "@/lib/gemini";
 export const maxDuration = 60;
 export const runtime = "nodejs";
 
-const IMAGE_MODEL = "gemini-2.5-flash-image-preview";
+const IMAGE_MODEL = "gemini-2.5-flash-image";
 
 type ImageInput = { mimeType: string; data: string };
 
