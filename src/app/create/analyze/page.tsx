@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import Link from "next/link";
 import { useProject } from "../context";
 
 export default function AnalyzePage() {
@@ -267,12 +268,12 @@ export default function AnalyzePage() {
             ))}
           </ol>
           <div className="mt-4 flex justify-end">
-            <a
+            <Link
               href="/create/images"
               className="text-sm text-blue-500 hover:underline"
             >
               다음: 비주얼 스타일 선택 →
-            </a>
+            </Link>
           </div>
         </section>
       )}
