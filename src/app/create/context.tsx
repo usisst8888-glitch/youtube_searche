@@ -44,8 +44,11 @@ type ProjectState = {
   analysis: ScriptAnalysis | null;
   setAnalysis: (a: ScriptAnalysis | null) => void;
 
-  newScriptTopic: string;
-  setNewScriptTopic: (v: string) => void;
+  productName: string;
+  setProductName: (v: string) => void;
+
+  productResearch: string;
+  setProductResearch: (v: string) => void;
 
   generatedScenes: SceneScript[];
   setGeneratedScenes: (s: SceneScript[]) => void;
@@ -76,7 +79,8 @@ const ProjectContext = createContext<ProjectState | null>(null);
 
 export function ProjectProvider({ children }: { children: ReactNode }) {
   const [analysis, setAnalysis] = useState<ScriptAnalysis | null>(null);
-  const [newScriptTopic, setNewScriptTopic] = useState("");
+  const [productName, setProductName] = useState("");
+  const [productResearch, setProductResearch] = useState("");
   const [generatedScenes, setGeneratedScenes] = useState<SceneScript[]>([]);
   const [productImages, setProductImages] = useState<ProductImage[]>([]);
   const [visualStyle, setVisualStyle] = useState<VisualStyle>("3d-cartoon");
@@ -91,8 +95,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       value={{
         analysis,
         setAnalysis,
-        newScriptTopic,
-        setNewScriptTopic,
+        productName,
+        setProductName,
+        productResearch,
+        setProductResearch,
         generatedScenes,
         setGeneratedScenes,
         productImages,

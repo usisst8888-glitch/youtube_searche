@@ -1,6 +1,5 @@
 "use client";
 
-import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useProject, VisualStyle } from "../context";
 
@@ -18,7 +17,6 @@ const VISUAL_STYLES: { id: VisualStyle; label: string; hint: string }[] = [
 export default function ImagesPage() {
   const {
     productImages,
-    setProductImages,
     visualStyle,
     setVisualStyle,
     customStylePrompt,
@@ -26,99 +24,31 @@ export default function ImagesPage() {
     generatedScenes,
   } = useProject();
 
-  const [dragging, setDragging] = useState(false);
-  const [error, setError] = useState("");
-
-  const readFiles = useCallback(async (files: FileList | File[]) => {
-    const arr = Array.from(files).filter((f) => f.type.startsWith("image/"));
-    if (arr.length === 0) {
-      setError("이미지 파일만 업로드 가능합니다.");
-      return;
-    }
-    const datas = await Promise.all(
-      arr.map(
-        (f) =>
-          new Promise<{ id: string; dataUrl: string; name: string }>(
-            (resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () =>
-                resolve({
-                  id: `${f.name}-${Date.now()}-${Math.random()}`,
-                  dataUrl: reader.result as string,
-                  name: f.name,
-                });
-              reader.onerror = reject;
-              reader.readAsDataURL(f);
-            },
-          ),
-      ),
-    );
-    setProductImages([...productImages, ...datas]);
-    setError("");
-  }, [productImages, setProductImages]);
-
   return (
     <div className="space-y-6">
       {generatedScenes.length === 0 && (
         <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-amber-800 dark:text-amber-200 text-sm rounded-lg px-4 py-3">
           ⚠️ 먼저{" "}
           <Link href="/create/analyze" className="underline">
-            1단계 (대본 분석)
+            1단계 (상품 조사 + 대본 생성)
           </Link>
-          을 완료해주세요. 씬별 대본이 있어야 이미지 생성 프롬프트에 쓸 수 있습니다.
+          을 완료해주세요.
         </div>
       )}
 
-      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-        <h2 className="font-semibold mb-3">상품 이미지 업로드</h2>
-
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragging(false);
-            readFiles(e.dataTransfer.files);
-          }}
-          className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-            dragging
-              ? "border-red-400 bg-red-50 dark:bg-red-950/20"
-              : "border-zinc-300 dark:border-zinc-700"
-          }`}
-        >
-          <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
-            📦 상품 사진을 여기에 드래그 앤 드롭하거나
-          </p>
-          <label className="inline-block bg-red-500 hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer">
-            파일 선택
-            <input
-              type="file"
-              multiple
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files) readFiles(e.target.files);
-              }}
-            />
-          </label>
-          <p className="mt-2 text-xs text-zinc-500">
-            여러 장 가능 (다양한 각도/배경/사용 장면 넣으면 결과 좋아짐)
-          </p>
-        </div>
-
-        {error && (
-          <p className="mt-2 text-sm text-red-600 dark:text-red-400">⚠️ {error}</p>
-        )}
-
-        {productImages.length > 0 && (
-          <div className="mt-5 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+      {productImages.length > 0 && (
+        <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
+          <h2 className="font-semibold mb-3">
+            📦 업로드된 상품 이미지{" "}
+            <span className="text-xs text-zinc-500">
+              ({productImages.length}장 — 1단계에서 업로드됨)
+            </span>
+          </h2>
+          <div className="grid grid-cols-4 md:grid-cols-6 gap-2">
             {productImages.map((img) => (
               <div
                 key={img.id}
-                className="relative group rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800"
+                className="rounded overflow-hidden border border-zinc-200 dark:border-zinc-800"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -126,33 +56,24 @@ export default function ImagesPage() {
                   alt={img.name}
                   className="w-full aspect-square object-cover"
                 />
-                <button
-                  type="button"
-                  onClick={() =>
-                    setProductImages(
-                      productImages.filter((p) => p.id !== img.id),
-                    )
-                  }
-                  className="absolute top-1 right-1 bg-black/60 hover:bg-red-500 text-white text-xs w-6 h-6 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="제거"
-                >
-                  ×
-                </button>
-                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent text-white text-xs p-1 truncate">
-                  {img.name}
-                </div>
               </div>
             ))}
           </div>
-        )}
-
-        <p className="mt-3 text-xs text-zinc-500">
-          업로드된 이미지 {productImages.length}장
-        </p>
-      </section>
+          <p className="mt-2 text-xs text-zinc-500">
+            이미지 수정이 필요하면{" "}
+            <Link href="/create/analyze" className="text-blue-500 underline">
+              1단계
+            </Link>
+            로 돌아가세요.
+          </p>
+        </section>
+      )}
 
       <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-        <h2 className="font-semibold mb-3">비주얼 스타일 선택</h2>
+        <h2 className="font-semibold mb-3">🎨 비주얼 스타일 선택</h2>
+        <p className="text-xs text-zinc-500 mb-4">
+          씬 이미지 생성에 쓰일 아트 스타일입니다. 스토리텔링에는 실사보다 스타일라이즈가 더 잘 어울립니다.
+        </p>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           {VISUAL_STYLES.map((s) => (
@@ -193,7 +114,7 @@ export default function ImagesPage() {
           href="/create/analyze"
           className="text-sm text-zinc-500 hover:underline"
         >
-          ← 이전: 대본 분석
+          ← 이전: 상품 조사 + 대본
         </Link>
         <Link
           href="/create/scenes"
