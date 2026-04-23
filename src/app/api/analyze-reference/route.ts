@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Content, Part } from "@google/genai";
 import { getGeminiClient, FLASH_MODEL } from "@/lib/gemini";
 import {
   extractVideoId,
@@ -108,9 +109,7 @@ export async function POST(req: NextRequest) {
     const ai = getGeminiClient();
     const prompt = buildAnalysisPrompt(topic || "", transcript);
 
-    const parts: Array<
-      { text: string } | { fileData: { fileUri: string; mimeType: string } }
-    > = [{ text: prompt }];
+    const parts: Part[] = [{ text: prompt }];
 
     if (!transcript) {
       parts.unshift({
@@ -118,9 +117,11 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const contents: Content[] = [{ role: "user", parts }];
+
     const response = await ai.models.generateContent({
       model: FLASH_MODEL,
-      contents: [{ role: "user", parts }],
+      contents,
       config: {
         responseMimeType: "application/json",
         responseSchema: ANALYSIS_SCHEMA,
