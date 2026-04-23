@@ -13,8 +13,9 @@ export function getGeminiClient(): GoogleGenAI {
   return client;
 }
 
-export const FLASH_MODEL = "gemini-2.5-flash";
+export const FLASH_MODEL = "gemini-2.5-flash-lite";
 export const FLASH_LITE_MODEL = "gemini-2.5-flash-lite";
+export const FLASH_FULL_MODEL = "gemini-2.5-flash";
 
 function isRetryable(err: unknown): boolean {
   if (!err) return false;
