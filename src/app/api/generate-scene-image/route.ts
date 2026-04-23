@@ -52,31 +52,58 @@ export async function POST(req: NextRequest) {
       : null;
     const prevPart: Part[] = prevInline ? [{ inlineData: prevInline }] : [];
 
+    const hasProduct = productParts.length > 0;
+
     const textPrompt = `You are generating scene ${sceneIndex + 1} of a Korean short-form storytelling video.
 
 ## Visual style
 ${stylePrompt}
 
-## This scene's script
+## This scene's script (narration context, NOT to render as text)
 "${sceneText}"
 
 ## Emotion / mood for this scene
 ${emotion}
 
+## ⚠️ CRITICAL RULE 1 — NO TEXT IN THE IMAGE
+- DO NOT include any text, letters, words, Korean characters (Hangul), numbers, subtitles, captions, speech bubbles, labels, watermarks, signs, logos with readable text, or any written content ANYWHERE in the image.
+- The image must be pure visual imagery. Zero typography.
+- If a character is shown speaking, show only their mouth/expression — no speech bubble, no text.
+${
+  hasProduct
+    ? `
+## ⚠️ CRITICAL RULE 2 — EXACT PRODUCT MATCH
+- The FIRST image(s) attached at the beginning of this prompt are reference images of the ACTUAL product.
+- If the product appears in this scene, it MUST be the EXACT same product as those reference images.
+- Preserve the product's exact shape, color, form factor, proportions, and distinctive features.
+- DO NOT substitute with a similar/generic product. DO NOT invent a product.
+- DO render the product in the ${stylePrompt} art style — but keep its identity recognizable.
+- If the scene doesn't naturally need the product visible, it's OK to keep it out of frame rather than adding a wrong product.`
+    : ""
+}
+
 ## Composition guidelines
 - Vertical 9:16 aspect ratio (Korean Shorts format)
 - ONE clear focal subject, clean background, strong storytelling composition
-- Include the product (subtly integrate it into the story when relevant)
 - Expressive character pose reflecting the "${emotion}" mood
-${previousImageDataUrl ? "- Maintain the SAME main character, outfit, and overall art direction as the reference image provided" : "- Establish the main character design (age, gender, look) so later scenes can reuse it"}
+${previousImageDataUrl ? "- Maintain the SAME main character, outfit, face, body type, hair, and overall art direction as the previous-scene reference image" : "- Establish the main character design (age, gender, look) so later scenes can reuse it"}
 
-Return a single image.`;
+Return a single image. No text. Just visuals.`;
 
-    const parts: Part[] = [
-      ...productParts,
-      ...prevPart,
-      { text: textPrompt },
-    ];
+    const parts: Part[] = [];
+    if (productParts.length > 0) {
+      parts.push({
+        text: "=== REFERENCE IMAGES: THE ACTUAL PRODUCT (must be preserved exactly in the output) ===",
+      });
+      parts.push(...productParts);
+    }
+    if (prevPart.length > 0) {
+      parts.push({
+        text: "=== REFERENCE IMAGE: PREVIOUS SCENE (for character + art style consistency only, not the product) ===",
+      });
+      parts.push(...prevPart);
+    }
+    parts.push({ text: textPrompt });
 
     const contents: Content[] = [{ role: "user", parts }];
 

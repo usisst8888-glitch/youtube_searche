@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useProject } from "../context";
+import { useProject, GeneratedSceneAsset } from "../context";
 import { buildStylePrompt } from "@/lib/style-prompts";
 
 export default function ScenesPage() {
@@ -23,38 +23,52 @@ export default function ScenesPage() {
   const getAsset = (idx: number) =>
     sceneAssets.find((a) => a.sceneIndex === idx);
 
-  const generateOne = async (idx: number) => {
+  const callGenerate = async (
+    idx: number,
+    prevImage: string | undefined,
+  ) => {
     const scene = generatedScenes[idx];
-    if (!scene) return;
+    if (!scene) throw new Error(`씬 ${idx + 1}이 존재하지 않습니다.`);
+    const res = await fetch("/api/generate-scene-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sceneIndex: idx,
+        sceneText: scene.text,
+        emotion: scene.emotion,
+        stylePrompt,
+        productDataUrls: productImages.map((p) => p.dataUrl),
+        previousImageDataUrl: prevImage,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "이미지 생성 실패");
+    return data.imageDataUrl as string;
+  };
+
+  const upsertAsset = (
+    assets: GeneratedSceneAsset[],
+    idx: number,
+    imageDataUrl: string,
+  ): GeneratedSceneAsset[] => {
+    const existing = assets.find((a) => a.sceneIndex === idx);
+    const next = assets.filter((a) => a.sceneIndex !== idx);
+    next.push({
+      sceneIndex: idx,
+      imageDataUrl,
+      videoUrl: existing?.videoUrl,
+    });
+    next.sort((a, b) => a.sceneIndex - b.sceneIndex);
+    return next;
+  };
+
+  const generateOne = async (idx: number) => {
     setError("");
     setProgressIndex(idx);
-
     try {
       const prevImage = idx > 0 ? getAsset(idx - 1)?.imageDataUrl : undefined;
-
-      const res = await fetch("/api/generate-scene-image", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sceneIndex: idx,
-          sceneText: scene.text,
-          emotion: scene.emotion,
-          stylePrompt,
-          productDataUrls: productImages.map((p) => p.dataUrl),
-          previousImageDataUrl: prevImage,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "이미지 생성 실패");
-
-      const next = [...sceneAssets.filter((a) => a.sceneIndex !== idx)];
-      next.push({
-        sceneIndex: idx,
-        imageDataUrl: data.imageDataUrl,
-        videoUrl: getAsset(idx)?.videoUrl,
-      });
-      next.sort((a, b) => a.sceneIndex - b.sceneIndex);
-      setSceneAssets(next);
+      const imageDataUrl = await callGenerate(idx, prevImage);
+      setSceneAssets(upsertAsset(sceneAssets, idx, imageDataUrl));
     } catch (e) {
       setError(e instanceof Error ? e.message : "오류");
     } finally {
@@ -63,9 +77,29 @@ export default function ScenesPage() {
   };
 
   const generateAll = async () => {
+    setError("");
+    // Keep a local working copy to avoid stale closure over sceneAssets
+    let working: GeneratedSceneAsset[] = [...sceneAssets];
     for (let i = 0; i < generatedScenes.length; i++) {
-      await generateOne(i);
+      setProgressIndex(i);
+      try {
+        const prevImage =
+          i > 0
+            ? working.find((a) => a.sceneIndex === i - 1)?.imageDataUrl
+            : undefined;
+        const imageDataUrl = await callGenerate(i, prevImage);
+        working = upsertAsset(working, i, imageDataUrl);
+        setSceneAssets([...working]);
+      } catch (e) {
+        setError(
+          `씬 ${i + 1} 생성 실패: ${
+            e instanceof Error ? e.message : "오류"
+          }`,
+        );
+        break;
+      }
     }
+    setProgressIndex(null);
   };
 
   if (generatedScenes.length === 0) {
