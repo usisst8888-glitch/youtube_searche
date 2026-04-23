@@ -111,6 +111,10 @@ Return a single image. No text. Just visuals.`;
       ai.models.generateContent({
         model: IMAGE_MODEL,
         contents,
+        config: {
+          responseModalities: ["IMAGE"],
+          imageConfig: { aspectRatio: "9:16" },
+        },
       }),
     );
 
