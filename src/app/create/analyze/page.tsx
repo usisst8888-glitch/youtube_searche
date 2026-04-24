@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useProject } from "../context";
 
@@ -35,15 +35,6 @@ export default function AnalyzePage() {
   const [suggesting, setSuggesting] = useState(false);
   const [suggestedTopics, setSuggestedTopics] = useState<SuggestedTopic[]>([]);
   const [referenceTitles, setReferenceTitles] = useState<string[]>([]);
-
-  useEffect(() => {
-    const prefill = localStorage.getItem("yt_prefill_product");
-    if (prefill) {
-      setProductName(prefill);
-      localStorage.removeItem("yt_prefill_product");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const handleSuggestTopics = async () => {
     setError("");

@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { ProjectProvider } from "./context";
 
 const STEPS = [
+  { href: "/create/research", label: "0. 제품 리서치" },
   { href: "/create/analyze", label: "1. 상품 & 대본" },
   { href: "/create/images", label: "2. 비주얼 스타일" },
   { href: "/create/scenes", label: "3. 씬 이미지" },

@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useProject } from "../context";
 
 type CoupangProduct = {
   productId: number;
@@ -23,21 +25,17 @@ type ProductResult = {
   coupangSearchUrl: string;
 };
 
-type VideoInfo = {
-  title: string;
-  views: number;
-  thumbnail: string;
-};
-
 type ApiResponse = {
   topic: string;
   products: ProductResult[];
-  videos: Record<string, VideoInfo>;
+  videos: Record<string, { title: string; views: number; thumbnail: string }>;
   coupangEnabled: boolean;
   error?: string;
 };
 
-export default function ResearchPage() {
+export default function CreateResearchPage() {
+  const router = useRouter();
+  const { setProductName, setStoryTopic } = useProject();
   const [topic, setTopic] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ApiResponse | null>(null);
@@ -67,22 +65,23 @@ export default function ResearchPage() {
     }
   };
 
-  const sendToCreate = (productName: string) => {
-    localStorage.setItem("yt_prefill_product", productName);
-    window.location.href = "/create/analyze";
+  const useThisProduct = (productName: string) => {
+    setProductName(productName);
+    setStoryTopic(topic);
+    router.push("/create/analyze");
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold mb-1">🛒 제품 리서치</h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          주제로 YouTube 쇼츠를 검색한 뒤, 영상 속 제품을 AI로 추출하고
-          쿠팡에서 찾아줍니다.
+    <div className="space-y-6">
+      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
+        <h2 className="font-semibold mb-1">🛒 제품 리서치 (선택)</h2>
+        <p className="text-xs text-zinc-500 mb-4">
+          주제를 입력하면 해당 주제로 바이럴한 YouTube 쇼츠들을 찾아서,
+          영상 속에 등장하는 제품을 AI가 추출합니다.
+          마음에 드는 제품을 골라 다음 단계로 넘기세요.
+          <br />이미 제품이 정해졌다면 이 단계는 건너뛰고 <b>2. 상품 & 대본</b>으로 가세요.
         </p>
-      </div>
 
-      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 mb-6">
         <label className="block text-sm font-medium mb-2">주제 / 장면</label>
         <div className="flex gap-2">
           <input
@@ -106,7 +105,8 @@ export default function ResearchPage() {
 
         {loading && (
           <p className="mt-3 text-xs text-zinc-500">
-            YouTube 검색 → 각 영상 Gemini 분석 → 제품 추출 → 쿠팡 검색, 약 30초~1분 소요.
+            YouTube 검색 → 영상 Gemini 분석 → 제품 추출
+            {result?.coupangEnabled ? " → 쿠팡 검색" : ""}, 약 30초~1분 소요.
           </p>
         )}
         {error && (
@@ -118,9 +118,9 @@ export default function ResearchPage() {
 
       {result && (
         <>
-          <section className="mb-6 flex items-center justify-between">
+          <section className="flex items-center justify-between">
             <div className="text-sm text-zinc-600 dark:text-zinc-400">
-              주제 <span className="font-semibold">&ldquo;{result.topic}&rdquo;</span> 에서
+              주제 <span className="font-semibold">&ldquo;{result.topic}&rdquo;</span>에서
               추출된 제품 <span className="font-semibold">{result.products.length}</span>개
               (영상 {Object.keys(result.videos).length}개 분석)
             </div>
@@ -138,7 +138,7 @@ export default function ResearchPage() {
                 className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div>
+                  <div className="flex-1 min-w-0">
                     <h3 className="font-semibold">{p.name}</h3>
                     <div className="text-xs text-zinc-500 mt-0.5">
                       <span className="px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded mr-1">
@@ -151,10 +151,10 @@ export default function ResearchPage() {
                     </p>
                   </div>
                   <button
-                    onClick={() => sendToCreate(p.name)}
+                    onClick={() => useThisProduct(p.name)}
                     className="shrink-0 text-xs bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg whitespace-nowrap"
                   >
-                    이걸로 쇼츠 만들기 →
+                    이걸로 →
                   </button>
                 </div>
 
@@ -244,17 +244,18 @@ export default function ResearchPage() {
               제품을 추출하지 못했습니다. 다른 주제로 시도해보세요.
             </div>
           )}
-
-          <div className="mt-6">
-            <Link
-              href="/create/analyze"
-              className="text-sm text-zinc-500 hover:underline"
-            >
-              ← 쇼츠 제작으로 돌아가기
-            </Link>
-          </div>
         </>
       )}
+
+      <div className="flex justify-between">
+        <span />
+        <Link
+          href="/create/analyze"
+          className="text-sm font-medium text-red-500 hover:underline"
+        >
+          건너뛰기 / 다음: 상품 & 대본 →
+        </Link>
+      </div>
     </div>
   );
 }
