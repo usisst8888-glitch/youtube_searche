@@ -69,7 +69,7 @@ function buildExtractPrompt(args: {
   foundUrls: string[];
 }): string {
   const { videoId, title, description, topComments, foundUrls } = args;
-  return `당신은 한국 유튜브 쇼츠에서 **실제 판매되는 소비재 제품**을 추출하는 전문가입니다.
+  return `당신은 한국 유튜브 쇼츠 **영상에 실제로 보이는 제품**을 추출하는 전문가입니다.
 
 ## 영상 정보
 
@@ -77,12 +77,12 @@ function buildExtractPrompt(args: {
 
 영상 URL: https://www.youtube.com/watch?v=${videoId}
 
-영상 설명(description):
+영상 설명(description) — **참고용만**, 여기에만 언급된 제품은 절대 추출하지 말 것:
 """
 ${description || "(설명 없음)"}
 """
 
-상단 댓글 (고정 댓글일 가능성 높음, 제품 정보/링크 자주 포함됨):
+상단 댓글 — **참고용만**:
 """
 ${
   topComments.length
@@ -91,31 +91,30 @@ ${
 }
 """
 
-자동 추출된 URL 목록 (설명/댓글에서):
+자동 추출된 URL 목록 (설명/댓글, 참고용):
 ${foundUrls.length ? foundUrls.map((u) => `- ${u}`).join("\n") : "(URL 없음)"}
 
-## 과제
+## 🎯 가장 중요한 원칙 — **영상에 시각적으로 보이는 제품만 추출**
 
-위 정보를 바탕으로 영상에 등장/언급되는 **쿠팡 등에서 검색 가능한 구체적 제품**을 추출하세요.
-
-## 🎯 추출 우선순위 (반드시 지킬 것)
-
-1. **설명(description)에 제품명·링크가 있으면 최우선.** 정확도 가장 높음.
-2. **상단 댓글에 제품명·링크가 있으면 두 번째.** (고정 댓글 = 크리에이터 공식 정보)
-3. 1·2에 없으면 첨부된 영상을 시청/시각 분석하여 추출
+**반드시 지켜야 할 규칙:**
+1. ✅ 첨부된 YouTube 영상을 시청하고, **화면에 실제로 등장하는 제품**만 추출
+2. ❌ 설명(description)이나 댓글에만 언급된 제품은 **절대 추출하지 마세요**
+   - description에 10개 제품 링크가 있어도, 영상에 안 나오는 건 무시
+   - 댓글 광고 링크/제휴 링크도 무시
+3. ✅ description/댓글은 **영상에 보이는 제품의 정확한 브랜드·모델명을 확인**할 때만 사용
+   - 예: 영상에 무선청소기가 보이는데, description에 "다이슨 V15 Detect Slim"이라고 써있으면 그 이름 사용
+4. ❌ 영상에 제품이 하나도 안 보이면 빈 배열 반환
 
 ## 각 제품 출력 형식
 
-- **name**: 구체적 제품명 (브랜드+모델 우선)
+- **name**: 구체적 제품명 (브랜드+모델 우선, description에서 확인 가능하면 그대로)
   - 좋은 예: "다이슨 V15 Detect Slim", "닥터자르트 세라마이딘 크림"
-  - 나쁜 예: "무선청소기", "크림" (너무 일반적)
-  - 설명/댓글에 정확한 제품명이 있으면 **그대로** 사용
+  - 나쁜 예: "무선청소기", "크림" (너무 일반적 — 브랜드 확인 안 되면 차라리 빼기)
 - **category**: 대분류 (가전 / 생활용품 / 식품 / 화장품 / 패션 / 문구 / 주방 등)
-- **context**: 영상에서 어떻게 등장하는지 한 줄
-- **productUrls**: 설명/댓글에서 발견된 **해당 제품 판매 링크** (쿠팡/스마트스토어/11번가 등)
-  - 자동 추출 URL 목록에서 이 제품에 해당하는 것만 골라 넣기
-  - 없으면 빈 배열 []
-- **source**: "description" (설명에서), "comment" (댓글에서), "visual" (영상 시각 분석), "mixed" 중 하나
+- **context**: 영상 속 **몇 초 구간/어떤 장면**에 나오는지 구체적으로 한 줄
+  - 예: "0~3초 썸네일에 클로즈업", "5초 구간 책상 위에 놓여있음"
+- **productUrls**: description/댓글에 이 제품의 판매 링크가 있으면 넣기, 없으면 []
+- **source**: 항상 "visual" (이 과제는 시각 기반 추출만)
 
 ## 필터
 
@@ -124,8 +123,9 @@ ${foundUrls.length ? foundUrls.map((u) => `- ${u}`).join("\n") : "(URL 없음)"}
 ❌ 서비스/장소 (카페, 은행)
 ❌ 사람/동물
 ❌ 추상 개념
+❌ description/댓글에만 있고 영상에 안 보이는 제품
 
-JSON으로 반환. 제품 0~5개. 중복 없이.`;
+JSON으로 반환. 제품 0~5개. 영상에 제품이 없으면 빈 배열.`;
 }
 
 async function extractProductsFromVideo(
@@ -308,11 +308,14 @@ export async function POST(req: NextRequest) {
     const perVideo = perVideoAll.filter((v) => v.products.length > 0);
     const zeroProductCount = perVideoAll.length - perVideo.length;
 
-    // 3. 제품 중복 제거 + 소스 누적
+    // 3. 제품 중복 제거 + 소스 누적 (visual 출처만 허용)
     const productMap = new Map<string, ProductWithSources>();
     for (const v of perVideo) {
       for (const p of v.products) {
         if (!p.name?.trim()) continue;
+        // 영상에 실제 보이는 제품만 통과 (visual / mixed 허용, description·comment 배제)
+        const src = (p.source || "").toLowerCase();
+        if (!(src.includes("visual") || src === "mixed")) continue;
         const key = normalizeKey(p.name);
         if (!productMap.has(key)) {
           productMap.set(key, {
