@@ -99,7 +99,12 @@ export default function CreateResearchPage() {
       const res = await fetch("/api/research-topic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic, maxVideos: 10 }),
+        body: JSON.stringify({
+          topic,
+          // 긴 주제 제목은 YouTube 검색에 부적합 → 위 섹션의 원래 키워드 사용
+          searchKeyword: topicKeyword.trim() || topic,
+          maxVideos: 10,
+        }),
       });
       const data: ApiResponse = await res.json();
       if (!res.ok) throw new Error(data.error || "요청 실패");
@@ -220,6 +225,15 @@ export default function CreateResearchPage() {
             {loading ? "분석 중..." : "🔍 제품 찾기"}
           </button>
         </div>
+        {topicKeyword.trim() && (
+          <p className="mt-1 text-xs text-zinc-500">
+            YouTube 검색은 위 섹션의 키워드{" "}
+            <code className="px-1 bg-zinc-100 dark:bg-zinc-800 rounded">
+              {topicKeyword}
+            </code>
+            로 진행됩니다. (긴 주제 제목이 매칭되지 않는 문제 방지)
+          </p>
+        )}
 
         {loading && (
           <p className="mt-3 text-xs text-zinc-500">

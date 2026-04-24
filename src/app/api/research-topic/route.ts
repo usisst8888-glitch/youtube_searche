@@ -190,7 +190,7 @@ function normalizeKey(name: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { topic, maxVideos = 10 } = await req.json();
+    const { topic, searchKeyword, maxVideos = 10 } = await req.json();
 
     if (!topic || typeof topic !== "string") {
       return NextResponse.json(
@@ -198,6 +198,10 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+    const queryForYouTube: string =
+      typeof searchKeyword === "string" && searchKeyword.trim()
+        ? searchKeyword.trim()
+        : topic;
 
     const youtubeKey = process.env.YOUTUBE_API_KEY;
     const geminiKey = process.env.GEMINI_API_KEY;
@@ -214,7 +218,7 @@ export async function POST(req: NextRequest) {
     ).toISOString();
     let searched: SearchItem[] = await searchShorts(
       youtubeKey,
-      topic,
+      queryForYouTube,
       30,
       "KR",
       "ko",
@@ -222,7 +226,9 @@ export async function POST(req: NextRequest) {
     );
     if (searched.length === 0) {
       return NextResponse.json(
-        { error: "해당 주제로 YouTube 검색 결과가 없습니다." },
+        {
+          error: `"${queryForYouTube}"로 YouTube 검색 결과가 없습니다. 더 짧은 키워드로 시도해보세요.`,
+        },
         { status: 404 },
       );
     }
