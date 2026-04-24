@@ -44,7 +44,7 @@ type ApiResponse = {
   coupangEnabled: boolean;
   filter?: {
     searched: number;
-    titleFiltered: number;
+    titleReviewMatches?: number;
     inspected: number;
     noShoppingSkipped?: number;
     returned: number;
@@ -333,9 +333,9 @@ export default function CreateResearchPage() {
               </div>
               {result.filter && (
                 <div className="text-xs text-zinc-500">
-                  🔎 검색 {result.filter.searched}개 · 제목 필터로{" "}
-                  {result.filter.titleFiltered}개 제외 · 쇼핑 태그 없음{" "}
-                  {result.filter.noShoppingSkipped ?? 0}개 스킵
+                  🔎 검색한 쇼츠 {result.filter.searched}개 중 쇼핑 태그 있는
+                  영상 <b>{result.filter.returned}</b>개 (쇼핑 태그 없어서 스킵{" "}
+                  {result.filter.noShoppingSkipped ?? 0}개)
                 </div>
               )}
             </div>

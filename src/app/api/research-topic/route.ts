@@ -34,9 +34,30 @@ function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
 }
 
+// 병렬 호출 동시성 제한 (YouTube watch 페이지 과다 요청 방지)
+async function pMapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }).map(
+    async () => {
+      while (true) {
+        const idx = i++;
+        if (idx >= items.length) break;
+        out[idx] = await fn(items[idx]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return out;
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { topic, searchKeyword, maxVideos = 15 } = await req.json();
+    const { topic, searchKeyword, maxVideos = 50 } = await req.json();
 
     if (!topic || typeof topic !== "string") {
       return NextResponse.json(
@@ -57,14 +78,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. YouTube 쇼츠 검색 (최근 90일, 조회수 순)
+    // 1. YouTube 쇼츠 검색 (최근 180일로 확대, 조회수 순)
     const publishedAfter = new Date(
-      Date.now() - 90 * 24 * 60 * 60 * 1000,
+      Date.now() - 180 * 24 * 60 * 60 * 1000,
     ).toISOString();
+
+    const searchMax = Math.min(50, Math.max(20, Number(maxVideos)));
     let searched: SearchItem[] = await searchShorts(
       youtubeKey,
       queryForYouTube,
-      30,
+      searchMax,
       "KR",
       "ko",
       publishedAfter,
@@ -85,65 +108,56 @@ export async function POST(req: NextRequest) {
     searched = searched.filter((s) => stats[s.videoId]?.isShorts);
     searched = await filterActualShorts(searched);
 
-    // 2. 제목 필터 (제품 리뷰 쇼츠 힌트)
-    const reviewOnly = searched.filter((s) =>
-      isProductReviewTitle(stats[s.videoId]?.title || ""),
+    const searchedCount = searched.length;
+
+    // 2. 조회수 순 정렬 (제목 필터는 제거 — 제품 보기 태그 유무로만 판단)
+    const ordered = [...searched].sort(
+      (a, b) =>
+        (stats[b.videoId]?.views || 0) - (stats[a.videoId]?.views || 0),
     );
 
-    // 제목 필터로 너무 많이 걸러지면 원본도 포함 (아래에서 쇼핑 태그로 재필터링)
-    const baseList = reviewOnly.length >= 3 ? reviewOnly : searched;
-    const filteredByTitleCount = searched.length - reviewOnly.length;
+    // 3. 각 영상의 "제품 보기" 태그 병렬 확인 (동시성 8)
+    const enriched = await pMapLimit(ordered, 8, async (s) => {
+      const info = stats[s.videoId];
+      const [comments, shoppingProducts] = await Promise.all([
+        getTopComments(youtubeKey, s.videoId, 5),
+        fetchYoutubeShoppingProducts(s.videoId),
+      ]);
+      const allText = [info?.description || "", ...comments].join("\n\n");
+      const urls = extractShoppingUrls(allText);
+      const result: VideoResult = {
+        videoId: s.videoId,
+        title: info?.title || "",
+        thumbnail: info?.thumbnail || "",
+        views: info?.views || 0,
+        publishedAt: info?.publishedAt?.slice(0, 10) || "",
+        descriptionPreview: truncate(info?.description || "", 400),
+        topComments: comments.slice(0, 3),
+        shoppingUrls: urls,
+        shoppingProducts,
+      };
+      return result;
+    });
 
-    const maxV = Math.min(25, Math.max(5, Number(maxVideos)));
-    const candidates = [...baseList]
-      .sort(
-        (a, b) =>
-          (stats[b.videoId]?.views || 0) - (stats[a.videoId]?.views || 0),
-      )
-      .slice(0, maxV);
-
-    // 3. 각 영상의 "제품 보기" (YouTube Shopping 태그) 가져오기
-    //    + 부수 데이터 (설명/댓글/URL)
-    const enriched = await Promise.all(
-      candidates.map(async (s) => {
-        const info = stats[s.videoId];
-        const [comments, shoppingProducts] = await Promise.all([
-          getTopComments(youtubeKey, s.videoId, 5),
-          fetchYoutubeShoppingProducts(s.videoId),
-        ]);
-        const allText = [info?.description || "", ...comments].join("\n\n");
-        const urls = extractShoppingUrls(allText);
-        const result: VideoResult = {
-          videoId: s.videoId,
-          title: info?.title || "",
-          thumbnail: info?.thumbnail || "",
-          views: info?.views || 0,
-          publishedAt: info?.publishedAt?.slice(0, 10) || "",
-          descriptionPreview: truncate(info?.description || "", 400),
-          topComments: comments.slice(0, 3),
-          shoppingUrls: urls,
-          shoppingProducts,
-        };
-        return result;
-      }),
-    );
-
-    // 4. "제품 보기" 태그가 있는 영상만 반환 (핵심 필터)
+    // 4. "제품 보기" 태그가 있는 영상만 반환
     const withShopping = enriched.filter(
       (v) => v.shoppingProducts.length > 0,
     );
-    const noShoppingCount = enriched.length - withShopping.length;
+
+    const titleReviewCount = ordered.filter((s) =>
+      isProductReviewTitle(stats[s.videoId]?.title || ""),
+    ).length;
 
     if (withShopping.length === 0) {
       return NextResponse.json(
         {
-          error:
-            "\"제품 보기\" (YouTube Shopping) 태그가 있는 영상을 찾지 못했습니다. 다른 키워드로 시도해보세요.",
+          error: `"${queryForYouTube}" 검색 결과 ${searchedCount}개 쇼츠 전부에 YouTube Shopping "제품 보기" 태그가 없습니다. 한국에서 이 기능을 설정한 크리에이터가 적을 수 있어요. 다른 키워드로 시도하거나, 쇼핑 태그가 흔한 카테고리(뷰티/패션/가전)로 바꿔보세요.`,
           filter: {
-            searched: searched.length,
-            titleFiltered: filteredByTitleCount,
+            searched: searchedCount,
+            titleReviewMatches: titleReviewCount,
             inspected: enriched.length,
-            withShopping: 0,
+            noShoppingSkipped: enriched.length,
+            returned: 0,
           },
         },
         { status: 404 },
@@ -158,10 +172,10 @@ export async function POST(req: NextRequest) {
       videos: withShopping,
       coupangEnabled: hasCoupangKeys(),
       filter: {
-        searched: searched.length,
-        titleFiltered: filteredByTitleCount,
+        searched: searchedCount,
+        titleReviewMatches: titleReviewCount,
         inspected: enriched.length,
-        noShoppingSkipped: noShoppingCount,
+        noShoppingSkipped: enriched.length - withShopping.length,
         returned: withShopping.length,
       },
     });

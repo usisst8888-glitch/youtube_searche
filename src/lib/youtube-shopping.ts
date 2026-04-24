@@ -132,7 +132,13 @@ function parseProductRenderer(
 
 const SHOPPING_RENDERER_KEYS = new Set([
   "productItemRenderer",
+  "productListItemRenderer",
   "productShelfLineItemRenderer",
+  "shoppingProductCardRenderer",
+  "merchandiseItemRenderer",
+  "productCardRenderer",
+  "productPreviewRenderer",
+  "miniShoppingProductRenderer",
 ]);
 
 export async function fetchYoutubeShoppingProducts(
