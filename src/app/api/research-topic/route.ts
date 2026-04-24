@@ -94,38 +94,43 @@ ${
 자동 추출된 URL 목록 (설명/댓글, 참고용):
 ${foundUrls.length ? foundUrls.map((u) => `- ${u}`).join("\n") : "(URL 없음)"}
 
-## 🎯 가장 중요한 원칙 — **영상에 시각적으로 보이는 제품만 추출**
+## 🎯 가장 중요한 원칙 — **"주연 제품"만 추출**
 
-**반드시 지켜야 할 규칙:**
-1. ✅ 첨부된 YouTube 영상을 시청하고, **화면에 실제로 등장하는 제품**만 추출
-2. ❌ 설명(description)이나 댓글에만 언급된 제품은 **절대 추출하지 마세요**
-   - description에 10개 제품 링크가 있어도, 영상에 안 나오는 건 무시
-   - 댓글 광고 링크/제휴 링크도 무시
-3. ✅ description/댓글은 **영상에 보이는 제품의 정확한 브랜드·모델명을 확인**할 때만 사용
-   - 예: 영상에 무선청소기가 보이는데, description에 "다이슨 V15 Detect Slim"이라고 써있으면 그 이름 사용
-4. ❌ 영상에 제품이 하나도 안 보이면 빈 배열 반환
+이 영상이 **제품 리뷰/꿀템 추천 영상**이라면, 영상의 **중심 소재가 되는 제품** 1~2개만 추출합니다.
+만약 이 영상이 제품 중심이 아니라 일반 브이로그/장면 소개라면, **빈 배열**을 반환하세요.
+
+### 반드시 지켜야 할 규칙
+1. ✅ 영상의 **주제·주연**이 되는 제품만 추출 (크리에이터가 대놓고 소개·리뷰하는 제품)
+2. ❌ 배경에 스쳐지나가는 일상 소품은 **절대 금지**
+   - 예: 도시락, 물통, 주차 정산기, 의자, 일반 가구, 핸드폰 등 배경 소품 → ❌
+3. ❌ **영상당 최대 2개**. 제품이 더 보여도 가장 중심적인 것만.
+4. ❌ 설명·댓글에만 언급되고 영상에 안 나오는 건 금지
+5. ✅ description/댓글은 **영상에 보이는 주연 제품의 브랜드명·모델명 확인용**으로만 참고
+
+### 주연 vs 배경 판단 기준
+- **주연**: 영상에서 클로즈업 / 사용 동작 시연 / 화면 중앙에 여러 번 / 크리에이터가 설명
+- **배경**: 화면 귀퉁이 / 한 번 스쳐지나감 / 설명 없음 / 다른 주연 옆에 놓여있을 뿐
 
 ## 각 제품 출력 형식
 
-- **name**: 구체적 제품명 (브랜드+모델 우선, description에서 확인 가능하면 그대로)
-  - 좋은 예: "다이슨 V15 Detect Slim", "닥터자르트 세라마이딘 크림"
-  - 나쁜 예: "무선청소기", "크림" (너무 일반적 — 브랜드 확인 안 되면 차라리 빼기)
+- **name**: 구체적 제품명 (브랜드+모델 우선)
+  - 좋은 예: "다이슨 V15 Detect Slim", "코베아 원터치 텐트"
+  - 나쁜 예: "텐트", "크림", "도시락" (일반 사물·너무 포괄적)
 - **category**: 대분류 (가전 / 생활용품 / 식품 / 화장품 / 패션 / 문구 / 주방 등)
-- **context**: 영상 속 **몇 초 구간/어떤 장면**에 나오는지 구체적으로 한 줄
-  - 예: "0~3초 썸네일에 클로즈업", "5초 구간 책상 위에 놓여있음"
+- **context**: 이 제품이 왜 **주연**인지 한 줄 (영상 속 역할·클로즈업 여부)
 - **productUrls**: description/댓글에 이 제품의 판매 링크가 있으면 넣기, 없으면 []
-- **source**: 항상 "visual" (이 과제는 시각 기반 추출만)
+- **source**: 항상 "visual"
 
 ## 필터
 
-✅ 가전, 생활용품, 식품, 화장품, 패션, 문구, 주방, 건강, 펫용품 등
-❌ 일반 사물 (의자, 집, 하늘)
-❌ 서비스/장소 (카페, 은행)
-❌ 사람/동물
-❌ 추상 개념
-❌ description/댓글에만 있고 영상에 안 보이는 제품
+✅ 가전, 생활용품, 식품, 화장품, 패션, 문구, 주방, 건강, 펫용품 중 주연 제품
+❌ 배경 소품, 일상 잡화
+❌ 일반 사물 / 서비스 / 장소 / 사람 / 동물
+❌ description/댓글에만 있고 영상에 안 보이는 것
 
-JSON으로 반환. 제품 0~5개. 영상에 제품이 없으면 빈 배열.`;
+**영상이 제품 리뷰가 아니면 빈 배열 []. 주연 제품 1~2개만. 3개 이상 금지.**
+
+JSON 반환.`;
 }
 
 async function extractProductsFromVideo(
@@ -241,7 +246,9 @@ export async function POST(req: NextRequest) {
     searched = searched.filter((s) => stats[s.videoId]?.isShorts);
     searched = await filterActualShorts(searched);
 
-    // 사전 필터: title/description에 쇼핑 신호 있는 영상만 우선
+    // 사전 필터: 제목에 강한 제품 신호(꿀템/TOP/VS 등)가 있거나,
+    // 설명에 쇼핑 URL이 있는 영상만 통과 (score >= 3)
+    const MIN_SCORE = 3;
     const scoredShorts = searched.map((s) => {
       const v = stats[s.videoId];
       return {
@@ -251,24 +258,32 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    const hasSignal = scoredShorts
-      .filter((x) => x.score > 0)
+    const strong = scoredShorts
+      .filter((x) => x.score >= MIN_SCORE)
       .sort((a, b) => b.score - a.score || b.views - a.views);
 
     const maxV = Math.min(20, Math.max(3, Number(maxVideos)));
     let topShorts: SearchItem[];
     let filteredOutCount = 0;
 
-    if (hasSignal.length >= 3) {
-      // 신호 있는 영상만 사용
-      topShorts = hasSignal.slice(0, maxV).map((x) => x.item);
-      filteredOutCount = searched.length - hasSignal.length;
+    if (strong.length >= 3) {
+      // 강한 제품 신호 있는 영상만
+      topShorts = strong.slice(0, maxV).map((x) => x.item);
+      filteredOutCount = searched.length - strong.length;
     } else {
-      // 신호가 너무 적으면 조회수 fallback (결과 보장)
-      topShorts = scoredShorts
-        .sort((a, b) => b.score - a.score || b.views - a.views)
-        .slice(0, maxV)
-        .map((x) => x.item);
+      // 너무 적으면 약한 신호도 포함 (score > 0)
+      const anySignal = scoredShorts
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score || b.views - a.views);
+      if (anySignal.length >= 3) {
+        topShorts = anySignal.slice(0, maxV).map((x) => x.item);
+        filteredOutCount = searched.length - anySignal.length;
+      } else {
+        topShorts = scoredShorts
+          .sort((a, b) => b.score - a.score || b.views - a.views)
+          .slice(0, maxV)
+          .map((x) => x.item);
+      }
     }
 
     if (topShorts.length === 0) {
@@ -279,18 +294,21 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. 각 쇼츠 분석 (병렬): description + 댓글 + URL + 영상 → 제품 추출
+    const MAX_PRODUCTS_PER_VIDEO = 2;
     const perVideoAll = await Promise.all(
       topShorts.map(async (s) => {
         const info = stats[s.videoId];
         const title = info?.title || "";
         const description = info?.description || "";
         const comments = await getTopComments(youtubeKey, s.videoId, 3);
-        const products = await extractProductsFromVideo(
+        const rawProducts = await extractProductsFromVideo(
           s.videoId,
           title,
           description,
           comments,
         );
+        // 영상당 최대 2개 (프롬프트 불복 안전장치)
+        const products = rawProducts.slice(0, MAX_PRODUCTS_PER_VIDEO);
         const urls = extractShoppingUrls(
           [description, ...comments].join("\n\n"),
         );

@@ -293,14 +293,20 @@ export function extractShoppingUrls(text: string): string[] {
   return all;
 }
 
+// 제품 리뷰/꿀템 쇼츠를 가리키는 강한 신호 (title에 있으면 거의 확실)
+const STRONG_TITLE_RE =
+  /꿀템|찐템|찐찐템|필수템|추천템|인생템|갓성비|내돈내산|솔직후기|언박싱|개봉기|리뷰|VS| vs |TOP\s*\d|BEST\s*\d|\d+\s*가지|\d+\s*개|필수|추천|템\b/i;
+
+// 제품 관련 일반 키워드 (title/description 합쳐서 판단)
 const PRODUCT_KEYWORDS_RE =
   /광고|협찬|유료광고|내돈내산|꿀템|찐템|찐찐템|추천템|필수템|인생템|갓성비|가성비|갖고싶은|구매링크|제품정보|제품상세|상세정보|할인정보|리뷰|솔직후기|써보니|언박싱|개봉|쿠팡|링크|제휴|파트너스|공구|공동구매/i;
 
 /**
- * 영상의 title + description 텍스트에서 "쇼핑/제품 관련 쇼츠"일 가능성을 점수화.
- * 3점 이상: 쇼핑 URL 존재 (거의 확실한 제품 쇼츠)
- * 1~2점: 제품 관련 키워드 포함
- * 0점: 신호 없음
+ * 영상이 "제품 중심 쇼츠"일 가능성을 점수화.
+ * 4점 이상: 제목에 강한 신호 (꿀템/TOP N/VS 등)
+ * 3점: 설명·댓글에 쇼핑 URL
+ * 1~2점: 키워드 포함
+ * 0점: 신호 없음 (일반 브이로그 등 — 배제 대상)
  */
 export function productSignalScore(
   title: string,
@@ -308,6 +314,7 @@ export function productSignalScore(
 ): number {
   const combined = `${title} ${description}`;
   let score = 0;
+  if (STRONG_TITLE_RE.test(title)) score += 4;
   if (extractShoppingUrls(combined).length > 0) score += 3;
   if (PRODUCT_KEYWORDS_RE.test(combined)) score += 1;
   return score;
