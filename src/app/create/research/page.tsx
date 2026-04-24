@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useProject } from "../context";
 
+type Subcategory = {
+  keyword: string;
+  description: string;
+};
+
 type SuggestedTopic = {
   title: string;
   format: string;
@@ -56,7 +61,12 @@ export default function CreateResearchPage() {
   const router = useRouter();
   const { setProductName, setStoryTopic } = useProject();
 
-  // Section 1: 주제 추천받기
+  // Section 0: 대주제 → 소주제
+  const [bigTopic, setBigTopic] = useState("");
+  const [subFetching, setSubFetching] = useState(false);
+  const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
+
+  // Section 1: 소주제 → 주제 추천
   const [topicKeyword, setTopicKeyword] = useState("");
   const [suggesting, setSuggesting] = useState(false);
   const [suggestedTopics, setSuggestedTopics] = useState<SuggestedTopic[]>([]);
@@ -68,6 +78,29 @@ export default function CreateResearchPage() {
   const [result, setResult] = useState<ApiResponse | null>(null);
 
   const [error, setError] = useState("");
+
+  const handleSuggestSubcategories = async () => {
+    setError("");
+    if (!bigTopic.trim()) {
+      setError("대주제를 입력하세요.");
+      return;
+    }
+    setSubFetching(true);
+    try {
+      const res = await fetch("/api/suggest-subcategories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bigTopic }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "소주제 생성 실패");
+      setSubcategories(data.subcategories || []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setSubFetching(false);
+    }
+  };
 
   const handleSuggestTopics = async () => {
     setError("");
@@ -128,8 +161,72 @@ export default function CreateResearchPage() {
     router.push("/create/analyze");
   };
 
+  const useSubcategory = (keyword: string) => {
+    setTopicKeyword(keyword);
+    setSuggestedTopics([]);
+    setReferenceTitles([]);
+  };
+
   return (
     <div className="space-y-6">
+      {/* Section 0: 대주제 → 소주제 */}
+      <section className="bg-sky-50 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-900/40 rounded-xl p-6">
+        <h2 className="font-semibold mb-1">⓪ 대주제 → 소주제 (선택)</h2>
+        <p className="text-xs text-zinc-500 mb-4">
+          큰 카테고리를 입력하면 쇼츠에 쓸 만한 세부 키워드 12개가 나옵니다.
+          이미 구체적 키워드가 있다면 이 단계 건너뛰고 ①로.
+        </p>
+
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={bigTopic}
+            onChange={(e) => setBigTopic(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !subFetching)
+                handleSuggestSubcategories();
+            }}
+            placeholder="예: 골프 / 자취 / 뷰티 / 홈트 / 캠핑"
+            className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
+          />
+          <button
+            type="button"
+            onClick={handleSuggestSubcategories}
+            disabled={subFetching}
+            className="bg-sky-600 hover:bg-sky-700 disabled:bg-zinc-400 text-white text-sm font-medium px-4 py-2 rounded-lg whitespace-nowrap"
+          >
+            {subFetching ? "생성 중..." : "소주제 찾기"}
+          </button>
+        </div>
+
+        {subcategories.length > 0 && (
+          <div className="mt-3">
+            <p className="text-xs text-zinc-500 mb-2">
+              👇 클릭하면 ① 섹션의 키워드로 자동 입력됩니다
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {subcategories.map((s) => (
+                <button
+                  key={s.keyword}
+                  type="button"
+                  onClick={() => useSubcategory(s.keyword)}
+                  className={`text-left border rounded-lg p-2 transition-colors ${
+                    topicKeyword === s.keyword
+                      ? "border-red-500 bg-red-50 dark:bg-red-950/30"
+                      : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-sky-400"
+                  }`}
+                >
+                  <div className="text-sm font-medium">{s.keyword}</div>
+                  <div className="text-xs text-zinc-500 line-clamp-1">
+                    {s.description}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
       {/* Section 1: 주제 추천받기 */}
       <section className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl p-6">
         <h2 className="font-semibold mb-1">① 주제 아이디어 찾기 (선택)</h2>
