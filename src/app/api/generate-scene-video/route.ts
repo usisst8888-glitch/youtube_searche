@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
         input: {
           prompt,
           image_url: imageUrl,
-          num_frames: Math.min(161, Math.round(durationSec * 24)),
+          num_frames: Math.min(257, Math.round(durationSec * 24)),
           aspect_ratio: "9:16",
         },
         logs: false,
