@@ -6,19 +6,19 @@ import { useProject } from "../context";
 
 export default function AnalyzePage() {
   const {
-    analysis,
-    setAnalysis,
     productName,
     setProductName,
     productResearch,
     setProductResearch,
+    storyPremise,
+    setStoryPremise,
     productImages,
     setProductImages,
     generatedScenes,
     setGeneratedScenes,
+    setAnalysis,
   } = useProject();
 
-  const [url, setUrl] = useState(analysis?.referenceUrl || "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -58,7 +58,6 @@ export default function AnalyzePage() {
 
   const handleAnalyze = async () => {
     setError("");
-    if (!url.trim()) return setError("참고 YouTube URL을 입력하세요.");
     if (!productName.trim()) return setError("상품명을 입력하세요.");
 
     setLoading(true);
@@ -67,16 +66,16 @@ export default function AnalyzePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          url,
           productName,
           productImageDataUrls: productImages.map((p) => p.dataUrl),
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "분석 실패");
-      setAnalysis(data.analysis);
+      if (!res.ok) throw new Error(data.error || "생성 실패");
       setGeneratedScenes(data.scenes || []);
       setProductResearch(data.productResearch || "");
+      setStoryPremise(data.storyPremise || "");
+      setAnalysis(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "오류");
     } finally {
@@ -87,36 +86,21 @@ export default function AnalyzePage() {
   return (
     <div className="space-y-6">
       <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-        <h2 className="font-semibold mb-4">입력</h2>
+        <h2 className="font-semibold mb-4">상품 입력</h2>
 
         <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              참고 YouTube 쇼츠 URL
-              <span className="ml-2 text-xs text-zinc-500">
-                (대본 구조/스타일만 참고)
-              </span>
-            </label>
-            <input
-              type="text"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://www.youtube.com/shorts/..."
-              className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
-            />
-          </div>
-
           <div>
             <label className="block text-sm font-medium mb-1">상품명</label>
             <input
               type="text"
               value={productName}
               onChange={(e) => setProductName(e.target.value)}
-              placeholder="예: 다이슨 V15 무선청소기, 벤큐 SW272U 모니터"
+              placeholder="예: 다이슨 V15 무선청소기"
               className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
             />
             <p className="mt-1 text-xs text-zinc-500">
-              Gemini가 웹 검색으로 타겟, 페인포인트, 셀링포인트를 자동 조사합니다.
+              Gemini가 웹 검색으로 타겟·생활 장면·감정 맥락을 조사한 뒤,
+              그걸 소재로 5씬 스토리를 짭니다. (제품 리뷰/광고 아님)
             </p>
           </div>
 
@@ -192,7 +176,7 @@ export default function AnalyzePage() {
             disabled={loading}
             className="bg-red-500 hover:bg-red-600 disabled:bg-zinc-400 text-white font-semibold px-5 py-2.5 rounded-lg"
           >
-            {loading ? "분석 중... (20~40초)" : "🔍 상품 조사 + 대본 생성"}
+            {loading ? "생성 중... (20~40초)" : "🔍 상품 조사 + 스토리 생성"}
           </button>
 
           {error && (
@@ -205,45 +189,17 @@ export default function AnalyzePage() {
 
       {productResearch && (
         <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-          <h2 className="font-semibold mb-3">🔎 상품 리서치 결과 (웹 검색)</h2>
-          <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">
+          <h2 className="font-semibold mb-3">🔎 상품 리서치 (웹 검색)</h2>
+          <div className="whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">
             {productResearch}
           </div>
         </section>
       )}
 
-      {analysis && (
+      {storyPremise && (
         <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-          <h2 className="font-semibold mb-3">📊 참고 영상 대본 스타일</h2>
-          <dl className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-            <div>
-              <dt className="font-medium text-zinc-500">스타일 요약</dt>
-              <dd className="mt-0.5">{analysis.styleSummary}</dd>
-            </div>
-            <div>
-              <dt className="font-medium text-zinc-500">훅 패턴</dt>
-              <dd className="mt-0.5">{analysis.hookPattern}</dd>
-            </div>
-            <div className="md:col-span-2">
-              <dt className="font-medium text-zinc-500">구조 노트</dt>
-              <dd className="mt-0.5 whitespace-pre-wrap">
-                {analysis.structureNotes}
-              </dd>
-            </div>
-            <div className="md:col-span-2">
-              <dt className="font-medium text-zinc-500">톤 태그</dt>
-              <dd className="mt-0.5 flex flex-wrap gap-1">
-                {analysis.toneTags.map((t) => (
-                  <span
-                    key={t}
-                    className="px-2 py-0.5 text-xs bg-zinc-100 dark:bg-zinc-800 rounded"
-                  >
-                    {t}
-                  </span>
-                ))}
-              </dd>
-            </div>
-          </dl>
+          <h2 className="font-semibold mb-2">🎭 스토리 프레미스</h2>
+          <p className="text-sm whitespace-pre-wrap">{storyPremise}</p>
         </section>
       )}
 

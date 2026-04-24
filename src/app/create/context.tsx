@@ -50,6 +50,9 @@ type ProjectState = {
   productResearch: string;
   setProductResearch: (v: string) => void;
 
+  storyPremise: string;
+  setStoryPremise: (v: string) => void;
+
   generatedScenes: SceneScript[];
   setGeneratedScenes: (s: SceneScript[]) => void;
 
@@ -81,6 +84,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [analysis, setAnalysis] = useState<ScriptAnalysis | null>(null);
   const [productName, setProductName] = useState("");
   const [productResearch, setProductResearch] = useState("");
+  const [storyPremise, setStoryPremise] = useState("");
   const [generatedScenes, setGeneratedScenes] = useState<SceneScript[]>([]);
   const [productImages, setProductImages] = useState<ProductImage[]>([]);
   const [visualStyle, setVisualStyle] = useState<VisualStyle>("3d-cartoon");
@@ -99,6 +103,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         setProductName,
         productResearch,
         setProductResearch,
+        storyPremise,
+        setStoryPremise,
         generatedScenes,
         setGeneratedScenes,
         productImages,
