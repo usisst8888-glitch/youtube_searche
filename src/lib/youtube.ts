@@ -33,6 +33,7 @@ export type VideoStats = {
   likes: number;
   comments: number;
   title: string;
+  description: string;
   publishedAt: string;
   durationSec: number;
   isShorts: boolean;
@@ -170,6 +171,7 @@ export async function getVideoStats(
         likes: parseInt(item.statistics?.likeCount || "0", 10),
         comments: parseInt(item.statistics?.commentCount || "0", 10),
         title: item.snippet.title,
+        description: item.snippet.description || "",
         publishedAt: item.snippet.publishedAt,
         durationSec: dur,
         isShorts: dur > 0 && dur <= SHORTS_MAX_SEC,
@@ -244,6 +246,51 @@ export function isExcludedChannel(
     if (!trimmed) return false;
     return lower.includes(trimmed.toLowerCase());
   });
+}
+
+export async function getTopComments(
+  apiKey: string,
+  videoId: string,
+  max = 3,
+): Promise<string[]> {
+  try {
+    const url = new URL(`${YT_BASE}/commentThreads`);
+    url.searchParams.set("part", "snippet");
+    url.searchParams.set("videoId", videoId);
+    url.searchParams.set("order", "relevance");
+    url.searchParams.set("maxResults", String(max));
+    url.searchParams.set("textFormat", "plainText");
+    url.searchParams.set("key", apiKey);
+    const res = await fetch(url.toString());
+    if (!res.ok) return [];
+    const data = await res.json();
+    const items = data.items || [];
+    return items
+      .map(
+        (it: {
+          snippet?: {
+            topLevelComment?: { snippet?: { textDisplay?: string } };
+          };
+        }) => it?.snippet?.topLevelComment?.snippet?.textDisplay || "",
+      )
+      .filter((t: string) => t.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+const SHOP_URL_RE =
+  /https?:\/\/(?:[\w-]+\.)*(?:coupang\.com|link\.coupang\.com|smartstore\.naver\.com|shopping\.naver\.com|brand\.naver\.com|11st\.co\.kr|gmarket\.co\.kr|auction\.co\.kr|wemakeprice\.com|tmon\.co\.kr|aliexpress\.com|amazon\.(?:com|co\.jp)|ohou\.se|musinsa\.com|29cm\.co\.kr|kakao\.com|tistory\.com)[^\s)\]]*/gi;
+
+const GENERIC_URL_RE = /https?:\/\/[^\s)\]]+/gi;
+
+export function extractShoppingUrls(text: string): string[] {
+  if (!text) return [];
+  const shop = Array.from(new Set(text.match(SHOP_URL_RE) || []));
+  if (shop.length > 0) return shop;
+  // fallback: any URL if no known shop
+  const all = Array.from(new Set(text.match(GENERIC_URL_RE) || []));
+  return all;
 }
 
 export async function verifyIsShort(videoId: string): Promise<boolean> {

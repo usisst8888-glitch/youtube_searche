@@ -5,6 +5,12 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useProject } from "../context";
 
+type SuggestedTopic = {
+  title: string;
+  format: string;
+  hook: string;
+};
+
 type CoupangProduct = {
   productId: number;
   productName: string;
@@ -20,7 +26,14 @@ type ProductResult = {
   name: string;
   category: string;
   context: string;
-  sources: { videoId: string; title: string; views: number }[];
+  productUrls: string[];
+  source: string;
+  sources: {
+    videoId: string;
+    title: string;
+    views: number;
+    urls: string[];
+  }[];
   coupang: CoupangProduct[] | null;
   coupangSearchUrl: string;
 };
@@ -36,15 +49,48 @@ type ApiResponse = {
 export default function CreateResearchPage() {
   const router = useRouter();
   const { setProductName, setStoryTopic } = useProject();
+
+  // Section 1: 주제 추천받기
+  const [topicKeyword, setTopicKeyword] = useState("");
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestedTopics, setSuggestedTopics] = useState<SuggestedTopic[]>([]);
+  const [referenceTitles, setReferenceTitles] = useState<string[]>([]);
+
+  // Section 2: 주제로 제품 찾기
   const [topic, setTopic] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ApiResponse | null>(null);
+
   const [error, setError] = useState("");
+
+  const handleSuggestTopics = async () => {
+    setError("");
+    if (!topicKeyword.trim()) {
+      setError("주제 찾기용 키워드를 입력하세요.");
+      return;
+    }
+    setSuggesting(true);
+    try {
+      const res = await fetch("/api/suggest-topics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keyword: topicKeyword, productName: "" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "주제 생성 실패");
+      setSuggestedTopics(data.topics || []);
+      setReferenceTitles(data.referenceTitles || []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   const handleResearch = async () => {
     setError("");
     if (!topic.trim()) {
-      setError("주제를 입력하세요.");
+      setError("주제를 입력하세요 (또는 위 섹션에서 추천받기).");
       return;
     }
     setLoading(true);
@@ -73,13 +119,85 @@ export default function CreateResearchPage() {
 
   return (
     <div className="space-y-6">
-      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-        <h2 className="font-semibold mb-1">🛒 제품 리서치 (선택)</h2>
+      {/* Section 1: 주제 추천받기 */}
+      <section className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl p-6">
+        <h2 className="font-semibold mb-1">① 주제 아이디어 찾기 (선택)</h2>
         <p className="text-xs text-zinc-500 mb-4">
-          주제를 입력하면 해당 주제로 바이럴한 YouTube 쇼츠들을 찾아서,
-          영상 속에 등장하는 제품을 AI가 추출합니다.
-          마음에 드는 제품을 골라 다음 단계로 넘기세요.
-          <br />이미 제품이 정해졌다면 이 단계는 건너뛰고 <b>2. 상품 & 대본</b>으로 가세요.
+          키워드로 YouTube 트렌드 분석 → 상품을 띄울 바이럴 주제 10개 추천.
+          주제가 이미 있으면 이 단계 건너뛰고 아래로.
+        </p>
+
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={topicKeyword}
+            onChange={(e) => setTopicKeyword(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !suggesting) handleSuggestTopics();
+            }}
+            placeholder="예: 자취 꿀템 / 30대 필수템 / 후회 없는 소비"
+            className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
+          />
+          <button
+            type="button"
+            onClick={handleSuggestTopics}
+            disabled={suggesting}
+            className="bg-amber-600 hover:bg-amber-700 disabled:bg-zinc-400 text-white text-sm font-medium px-4 py-2 rounded-lg whitespace-nowrap"
+          >
+            {suggesting ? "분석 중..." : "주제 추천받기"}
+          </button>
+        </div>
+
+        {suggestedTopics.length > 0 && (
+          <div className="mt-3 space-y-2">
+            <p className="text-xs text-zinc-500">
+              👇 클릭하면 아래 주제 필드에 자동 입력됩니다
+            </p>
+            <ol className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {suggestedTopics.map((t, i) => (
+                <li key={i}>
+                  <button
+                    type="button"
+                    onClick={() => setTopic(t.title)}
+                    className={`w-full text-left border rounded-lg p-2.5 transition-colors ${
+                      topic === t.title
+                        ? "border-red-500 bg-red-50 dark:bg-red-950/30"
+                        : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-zinc-400"
+                    }`}
+                  >
+                    <div className="text-sm font-medium">{t.title}</div>
+                    <div className="text-xs text-zinc-500 mt-0.5">
+                      <span className="px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded mr-1">
+                        {t.format}
+                      </span>
+                      {t.hook}
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ol>
+            {referenceTitles.length > 0 && (
+              <details className="mt-2 text-xs text-zinc-500">
+                <summary className="cursor-pointer">
+                  🔎 참고한 트렌딩 쇼츠 제목 {referenceTitles.length}개
+                </summary>
+                <ul className="mt-1 ml-4 list-disc space-y-0.5">
+                  {referenceTitles.map((t, i) => (
+                    <li key={i}>{t}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* Section 2: 주제로 제품 찾기 */}
+      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
+        <h2 className="font-semibold mb-1">② 주제로 제품 찾기</h2>
+        <p className="text-xs text-zinc-500 mb-4">
+          해당 주제로 바이럴한 YouTube 쇼츠들을 찾고, 설명·고정댓글·영상에서
+          등장하는 제품을 추출합니다.
         </p>
 
         <label className="block text-sm font-medium mb-2">주제 / 장면</label>
@@ -91,22 +209,22 @@ export default function CreateResearchPage() {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !loading) handleResearch();
             }}
-            placeholder="예: 자취 1년차 vs 5년차 꿀템 / 30대 필수템 / 후회 없는 소비"
+            placeholder="예: 자취 1년차 vs 5년차 꿀템 (또는 위 섹션에서 추천받기)"
             className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
           />
           <button
             onClick={handleResearch}
             disabled={loading}
-            className="bg-red-500 hover:bg-red-600 disabled:bg-zinc-400 text-white font-semibold px-5 py-2 rounded-lg"
+            className="bg-red-500 hover:bg-red-600 disabled:bg-zinc-400 text-white font-semibold px-5 py-2 rounded-lg whitespace-nowrap"
           >
-            {loading ? "분석 중..." : "🔍 리서치"}
+            {loading ? "분석 중..." : "🔍 제품 찾기"}
           </button>
         </div>
 
         {loading && (
           <p className="mt-3 text-xs text-zinc-500">
-            YouTube 검색 → 영상 Gemini 분석 → 제품 추출
-            {result?.coupangEnabled ? " → 쿠팡 검색" : ""}, 약 30초~1분 소요.
+            YouTube 검색 → 설명·댓글·영상 분석 → 제품 추출
+            {result?.coupangEnabled ? " → 쿠팡 검색" : ""}, 약 30초~1분.
           </p>
         )}
         {error && (
@@ -122,7 +240,7 @@ export default function CreateResearchPage() {
             <div className="text-sm text-zinc-600 dark:text-zinc-400">
               주제 <span className="font-semibold">&ldquo;{result.topic}&rdquo;</span>에서
               추출된 제품 <span className="font-semibold">{result.products.length}</span>개
-              (영상 {Object.keys(result.videos).length}개 분석)
+              (영상 {Object.keys(result.videos).length}개)
             </div>
             {!result.coupangEnabled && (
               <div className="text-xs text-amber-600 dark:text-amber-400">
@@ -140,11 +258,13 @@ export default function CreateResearchPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <h3 className="font-semibold">{p.name}</h3>
-                    <div className="text-xs text-zinc-500 mt-0.5">
-                      <span className="px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded mr-1">
+                    <div className="text-xs text-zinc-500 mt-0.5 flex flex-wrap gap-1 items-center">
+                      <span className="px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded">
                         {p.category}
                       </span>
-                      {p.sources.length}개 영상 등장
+                      <span>{p.sources.length}개 영상 등장</span>
+                      <span>·</span>
+                      <span className="text-zinc-400">출처: {p.source}</span>
                     </div>
                     <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
                       {p.context}
@@ -157,6 +277,28 @@ export default function CreateResearchPage() {
                     이걸로 →
                   </button>
                 </div>
+
+                {p.productUrls.length > 0 && (
+                  <div className="mt-3 text-xs">
+                    <div className="text-zinc-500 mb-1">
+                      🔗 영상에서 발견한 판매 링크:
+                    </div>
+                    <ul className="space-y-0.5">
+                      {p.productUrls.map((u) => (
+                        <li key={u}>
+                          <a
+                            href={u}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-blue-500 hover:underline break-all"
+                          >
+                            {u}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 {p.coupang && p.coupang.length > 0 ? (
                   <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800">
