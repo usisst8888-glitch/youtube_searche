@@ -291,7 +291,7 @@ export default function FinalizePage() {
       <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
         <h2 className="font-semibold mb-3">🎬 최종 합성 & 다운로드</h2>
         <p className="text-xs text-zinc-500 mb-3">
-          5개 씬 비디오를 이어붙이고 TTS/BGM을 얹습니다. 브라우저 안에서 FFmpeg.wasm으로 처리 (서버 비용 0원).
+          씬 비디오들을 이어붙이고 TTS/BGM을 얹습니다. 브라우저 안에서 FFmpeg.wasm으로 처리 (서버 비용 0원).
         </p>
         <button
           onClick={handleMerge}
