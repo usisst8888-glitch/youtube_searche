@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { useProject } from "../context";
+import { useProject, WebSceneAsset } from "../context";
 
 export default function AnalyzePage() {
   const {
@@ -14,48 +14,22 @@ export default function AnalyzePage() {
     setProductResearch,
     storyPremise,
     setStoryPremise,
-    productImages,
-    setProductImages,
     generatedScenes,
     setGeneratedScenes,
     setAnalysis,
+    fetchedSceneAssets,
+    setFetchedSceneAssets,
+    selectedSceneAsset,
+    setSelectedSceneAsset,
   } = useProject();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [dragging, setDragging] = useState(false);
-
-  const readFiles = useCallback(
-    async (files: FileList | File[]) => {
-      const arr = Array.from(files).filter((f) =>
-        f.type.startsWith("image/"),
-      );
-      if (arr.length === 0) {
-        setError("이미지 파일만 업로드 가능합니다.");
-        return;
-      }
-      const datas = await Promise.all(
-        arr.map(
-          (f) =>
-            new Promise<{ id: string; dataUrl: string; name: string }>(
-              (resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () =>
-                  resolve({
-                    id: `${f.name}-${Date.now()}-${Math.random()}`,
-                    dataUrl: reader.result as string,
-                    name: f.name,
-                  });
-                reader.onerror = reject;
-                reader.readAsDataURL(f);
-              },
-            ),
-        ),
-      );
-      setProductImages([...productImages, ...datas]);
-      setError("");
-    },
-    [productImages, setProductImages],
+  const [fetchingSceneIndex, setFetchingSceneIndex] = useState<number | null>(
+    null,
+  );
+  const [activeSceneIndex, setActiveSceneIndex] = useState<number | null>(
+    null,
   );
 
   const handleAnalyze = async () => {
@@ -70,7 +44,7 @@ export default function AnalyzePage() {
         body: JSON.stringify({
           storyTopic,
           productName,
-          productImageDataUrls: productImages.map((p) => p.dataUrl),
+          productImageDataUrls: [],
         }),
       });
       const data = await res.json();
@@ -79,6 +53,9 @@ export default function AnalyzePage() {
       setProductResearch(data.productResearch || "");
       setStoryPremise(data.storyPremise || "");
       setAnalysis(null);
+      setFetchedSceneAssets({});
+      setSelectedSceneAsset({});
+      setActiveSceneIndex(0);
     } catch (e) {
       setError(e instanceof Error ? e.message : "오류");
     } finally {
@@ -86,178 +63,342 @@ export default function AnalyzePage() {
     }
   };
 
+  const fetchAssetsForScene = async (sceneIndex: number) => {
+    const scene = generatedScenes[sceneIndex];
+    if (!scene) return;
+    setFetchingSceneIndex(sceneIndex);
+    setError("");
+    try {
+      const res = await fetch("/api/fetch-scene-assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sceneText: scene.text,
+          emotion: scene.emotion,
+          productName,
+          sources: ["youtube", "web-image", "tiktok"],
+          limitPerSource: 5,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "소재 수집 실패");
+      setFetchedSceneAssets((prev) => ({
+        ...prev,
+        [sceneIndex]: data.assets as WebSceneAsset[],
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setFetchingSceneIndex(null);
+    }
+  };
+
+  const selectAsset = (sceneIndex: number, asset: WebSceneAsset) => {
+    setSelectedSceneAsset((prev) => ({ ...prev, [sceneIndex]: asset }));
+  };
+
+  const deselectAsset = (sceneIndex: number) => {
+    setSelectedSceneAsset((prev) => {
+      const next = { ...prev };
+      delete next[sceneIndex];
+      return next;
+    });
+  };
+
+  const assetThumb = (a: WebSceneAsset): string => {
+    if (a.kind === "youtube-short") return a.thumbnail;
+    if (a.kind === "web-image") return a.imageUrl;
+    return a.coverUrl;
+  };
+
+  const assetLabel = (a: WebSceneAsset): string => {
+    if (a.kind === "youtube-short") return "🎬 YouTube Shorts";
+    if (a.kind === "web-image") return "🖼️ 제품 이미지";
+    return "🎵 TikTok";
+  };
+
+  const assetSource = (a: WebSceneAsset): string => {
+    if (a.kind === "youtube-short") return a.channel;
+    if (a.kind === "web-image") return a.siteName || "웹";
+    return a.author;
+  };
+
+  const assetLink = (a: WebSceneAsset): string => {
+    if (a.kind === "youtube-short") return a.watchUrl;
+    if (a.kind === "web-image") return a.sourceUrl;
+    return a.watchUrl;
+  };
+
   return (
     <div className="space-y-6">
+      {/* 입력 */}
       <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
         <h2 className="font-semibold mb-1">입력</h2>
         <p className="text-xs text-zinc-500 mb-4">
-          주제는 위{" "}
+          주제·상품명은{" "}
           <Link
             href="/create/research"
             className="text-blue-500 hover:underline"
           >
-            0단계 제품 리서치
+            0단계 썰 라이브러리
           </Link>
-          에서 자동 입력되거나, 직접 입력할 수도 있습니다.
+          에서 선택하면 자동 입력. 대본 생성 후 각 씬마다 YouTube /
+          쇼핑이미지 / TikTok에서 소재를 가져와서 고를 수 있어요.
         </p>
 
-        <div className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium mb-1">
-              🎭 스토리 주제 / 장면
+              🎭 스토리 주제
             </label>
             <textarea
               rows={2}
               value={storyTopic}
               onChange={(e) => setStoryTopic(e.target.value)}
-              placeholder="예: 자취 1년차 vs 5년차 꿀템 / 퇴근 후 혼자 있는 방"
-              className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
+              placeholder="예: 왜 항아리 모양인지 아세요?"
+              className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
             />
           </div>
-
           <div>
             <label className="block text-sm font-medium mb-1">상품명</label>
             <input
               type="text"
               value={productName}
               onChange={(e) => setProductName(e.target.value)}
-              placeholder="예: 다이슨 V15 무선청소기"
-              className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
+              placeholder="예: 빙그레 바나나맛 우유"
+              className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
             />
-            <p className="mt-1 text-xs text-zinc-500">
-              위 주제를 뼈대로 스토리가 짜이고, 이 상품은 장면 속 소품으로
-              자연스럽게 등장합니다.
-            </p>
           </div>
+        </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              상품 이미지 (여러 장 가능)
-            </label>
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragging(true);
-              }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragging(false);
-                readFiles(e.dataTransfer.files);
-              }}
-              className={`border-2 border-dashed rounded-xl p-5 text-center transition-colors ${
-                dragging
-                  ? "border-red-400 bg-red-50 dark:bg-red-950/20"
-                  : "border-zinc-300 dark:border-zinc-700"
-              }`}
-            >
-              <p className="text-xs text-zinc-600 dark:text-zinc-400 mb-2">
-                📦 이미지를 드래그하거나
-              </p>
-              <label className="inline-block bg-red-500 hover:bg-red-600 text-white text-sm font-medium px-4 py-1.5 rounded-lg cursor-pointer">
-                파일 선택
-                <input
-                  type="file"
-                  multiple
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    if (e.target.files) readFiles(e.target.files);
-                  }}
-                />
-              </label>
-            </div>
-            {productImages.length > 0 && (
-              <div className="mt-3 grid grid-cols-4 md:grid-cols-6 gap-2">
-                {productImages.map((img) => (
-                  <div
-                    key={img.id}
-                    className="relative group rounded overflow-hidden border border-zinc-200 dark:border-zinc-800"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={img.dataUrl}
-                      alt={img.name}
-                      className="w-full aspect-square object-cover"
-                    />
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setProductImages(
-                          productImages.filter((p) => p.id !== img.id),
-                        )
-                      }
-                      className="absolute top-0.5 right-0.5 bg-black/60 hover:bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
+        <div className="mt-4 flex items-center gap-3">
           <button
             onClick={handleAnalyze}
             disabled={loading}
             className="bg-red-500 hover:bg-red-600 disabled:bg-zinc-400 text-white font-semibold px-5 py-2.5 rounded-lg"
           >
-            {loading ? "생성 중... (20~40초)" : "🎬 스토리 생성"}
+            {loading ? "대본 생성 중... (20~40초)" : "🎬 대본 생성"}
           </button>
-
           {error && (
-            <div className="text-sm text-red-600 dark:text-red-400">
+            <span className="text-sm text-red-600 dark:text-red-400">
               ⚠️ {error}
-            </div>
+            </span>
           )}
         </div>
       </section>
 
-      {productResearch && (
-        <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-          <h2 className="font-semibold mb-3">🔎 제품 사용 맥락</h2>
-          <div className="whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">
-            {productResearch}
-          </div>
-        </section>
-      )}
-
+      {/* 스토리 프레미스 */}
       {storyPremise && (
-        <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-          <h2 className="font-semibold mb-2">🎭 스토리 프레미스</h2>
+        <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+          <div className="text-xs font-medium text-zinc-500 mb-1">
+            🎭 스토리 프레미스
+          </div>
           <p className="text-sm whitespace-pre-wrap">{storyPremise}</p>
         </section>
       )}
 
+      {/* 대본 + 씬별 소재 */}
       {generatedScenes.length > 0 && (
-        <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-          <h2 className="font-semibold mb-3">🎬 생성된 씬별 대본</h2>
-          <ol className="space-y-3">
-            {generatedScenes.map((s) => (
-              <li
-                key={s.index}
-                className="border-l-4 border-red-400 pl-4 py-1"
-              >
-                <div className="flex items-center gap-2 text-xs text-zinc-500">
-                  <span>씬 {s.index + 1}</span>
-                  <span>·</span>
-                  <span>{s.durationSec}초</span>
-                  <span>·</span>
-                  <span className="text-red-500">{s.emotion}</span>
-                </div>
-                <p className="mt-1 text-sm">{s.text}</p>
-              </li>
-            ))}
-          </ol>
-          <div className="mt-4 flex justify-end">
-            <Link
-              href="/create/images"
-              className="text-sm text-blue-500 hover:underline"
-            >
-              다음: 비주얼 스타일 선택 →
-            </Link>
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* 왼쪽: 씬 리스트 */}
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 space-y-2">
+            <h3 className="font-semibold mb-2">🎬 씬별 대본</h3>
+            {generatedScenes.map((s) => {
+              const selected = selectedSceneAsset[s.index];
+              const isActive = activeSceneIndex === s.index;
+              return (
+                <button
+                  key={s.index}
+                  type="button"
+                  onClick={() => setActiveSceneIndex(s.index)}
+                  className={`w-full text-left border rounded-lg p-3 transition-colors ${
+                    isActive
+                      ? "border-red-500 bg-red-50 dark:bg-red-950/20"
+                      : "border-zinc-200 dark:border-zinc-800 hover:border-zinc-400"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="font-semibold">씬 {s.index + 1}</span>
+                      <span className="text-zinc-400">·</span>
+                      <span className="text-zinc-500">{s.durationSec}초</span>
+                      <span className="text-zinc-400">·</span>
+                      <span className="text-red-500">{s.emotion}</span>
+                    </div>
+                    {selected ? (
+                      <span className="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded">
+                        ✅ 소재 선택됨
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 px-2 py-0.5 rounded">
+                        소재 없음
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm leading-snug">{s.text}</p>
+                  {selected && (
+                    <div className="mt-2 flex gap-2 items-center">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={assetThumb(selected)}
+                        alt=""
+                        className="w-12 h-12 object-cover rounded bg-zinc-100 dark:bg-zinc-800"
+                      />
+                      <div className="text-xs text-zinc-500 truncate flex-1">
+                        {assetLabel(selected)} · {assetSource(selected)}
+                      </div>
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 오른쪽: 선택된 씬의 소재 패널 */}
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+            {activeSceneIndex === null ? (
+              <div className="text-sm text-zinc-500 py-8 text-center">
+                왼쪽에서 씬을 선택하면 소재 후보가 여기 표시됩니다.
+              </div>
+            ) : (
+              (() => {
+                const scene = generatedScenes[activeSceneIndex];
+                const assets = fetchedSceneAssets[activeSceneIndex] || [];
+                const selected = selectedSceneAsset[activeSceneIndex];
+                return (
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-semibold text-sm">
+                        씬 {activeSceneIndex + 1} 소재 선택
+                      </h3>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => fetchAssetsForScene(activeSceneIndex)}
+                          disabled={fetchingSceneIndex !== null}
+                          className="text-xs bg-sky-600 hover:bg-sky-700 disabled:bg-zinc-400 text-white px-3 py-1.5 rounded-lg"
+                        >
+                          {fetchingSceneIndex === activeSceneIndex
+                            ? "검색 중..."
+                            : assets.length === 0
+                              ? "🔍 소재 찾기"
+                              : "🔄 다시 찾기"}
+                        </button>
+                        {selected && (
+                          <button
+                            type="button"
+                            onClick={() => deselectAsset(activeSceneIndex)}
+                            className="text-xs bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 px-2 py-1.5 rounded-lg"
+                          >
+                            선택 해제
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-400 mb-3 italic">
+                      &ldquo;{scene?.text}&rdquo;
+                    </p>
+
+                    {assets.length === 0 ? (
+                      <div className="text-sm text-zinc-500 py-6 text-center">
+                        {fetchingSceneIndex === activeSceneIndex
+                          ? "YouTube · 쇼핑 페이지 · TikTok 검색 중..."
+                          : "아직 소재를 찾지 않았습니다. 위 버튼을 눌러주세요."}
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                        {assets.map((a, idx) => {
+                          const thumb = assetThumb(a);
+                          const isSelected =
+                            selected && JSON.stringify(selected) === JSON.stringify(a);
+                          return (
+                            <button
+                              key={`${a.kind}-${idx}`}
+                              type="button"
+                              onClick={() => selectAsset(activeSceneIndex, a)}
+                              className={`relative text-left border rounded-lg overflow-hidden hover:border-red-400 ${
+                                isSelected
+                                  ? "border-red-500 ring-2 ring-red-500"
+                                  : "border-zinc-200 dark:border-zinc-800"
+                              }`}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={thumb}
+                                alt=""
+                                className="w-full aspect-[9/16] object-cover bg-zinc-100 dark:bg-zinc-800"
+                              />
+                              <div className="absolute top-1 left-1 text-[9px] bg-black/70 text-white px-1.5 py-0.5 rounded">
+                                {assetLabel(a)}
+                              </div>
+                              {isSelected && (
+                                <div className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">
+                                  ✓
+                                </div>
+                              )}
+                              <div className="p-1.5">
+                                <div className="text-[10px] line-clamp-2 leading-tight">
+                                  {a.kind === "youtube-short"
+                                    ? a.title
+                                    : a.kind === "web-image"
+                                      ? a.title || a.siteName
+                                      : a.title || "TikTok 영상"}
+                                </div>
+                                <div className="text-[9px] text-zinc-500 mt-0.5 flex items-center justify-between">
+                                  <span className="truncate">
+                                    {assetSource(a)}
+                                  </span>
+                                  <a
+                                    href={assetLink(a)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="text-blue-500 hover:underline shrink-0 ml-1"
+                                  >
+                                    원본 ↗
+                                  </a>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()
+            )}
           </div>
         </section>
+      )}
+
+      {/* 제품 리서치 (접이식) */}
+      {productResearch && (
+        <details className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+          <summary className="cursor-pointer text-sm font-semibold">
+            🔎 제품 사용 맥락 (리서치 결과)
+          </summary>
+          <div className="whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300 mt-3">
+            {productResearch}
+          </div>
+        </details>
+      )}
+
+      {generatedScenes.length > 0 && (
+        <div className="flex justify-between">
+          <Link
+            href="/create/research"
+            className="text-sm text-zinc-500 hover:underline"
+          >
+            ← 이전: 제품 리서치
+          </Link>
+          <Link
+            href="/create/images"
+            className="text-sm font-medium text-red-500 hover:underline"
+          >
+            다음: 비주얼 스타일 →
+          </Link>
+        </div>
       )}
     </div>
   );

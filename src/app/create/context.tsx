@@ -40,6 +40,34 @@ export type GeneratedSceneAsset = {
   videoUrl?: string;
 };
 
+export type WebSceneAsset =
+  | {
+      kind: "youtube-short";
+      videoId: string;
+      title: string;
+      thumbnail: string;
+      views: number;
+      channel: string;
+      embedUrl: string;
+      watchUrl: string;
+    }
+  | {
+      kind: "web-image";
+      imageUrl: string;
+      sourceUrl: string;
+      title?: string;
+      siteName?: string;
+    }
+  | {
+      kind: "tiktok";
+      videoId: string;
+      coverUrl: string;
+      title: string;
+      author: string;
+      playUrl?: string;
+      watchUrl: string;
+    };
+
 type ProjectState = {
   analysis: ScriptAnalysis | null;
   setAnalysis: (a: ScriptAnalysis | null) => void;
@@ -71,6 +99,24 @@ type ProjectState = {
   sceneAssets: GeneratedSceneAsset[];
   setSceneAssets: (v: GeneratedSceneAsset[]) => void;
 
+  fetchedSceneAssets: Record<number, WebSceneAsset[]>;
+  setFetchedSceneAssets: (
+    v:
+      | Record<number, WebSceneAsset[]>
+      | ((
+          prev: Record<number, WebSceneAsset[]>,
+        ) => Record<number, WebSceneAsset[]>),
+  ) => void;
+
+  selectedSceneAsset: Record<number, WebSceneAsset>;
+  setSelectedSceneAsset: (
+    v:
+      | Record<number, WebSceneAsset>
+      | ((
+          prev: Record<number, WebSceneAsset>,
+        ) => Record<number, WebSceneAsset>),
+  ) => void;
+
   ttsAudioUrl: string | null;
   setTtsAudioUrl: (v: string | null) => void;
 
@@ -94,6 +140,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [visualStyle, setVisualStyle] = useState<VisualStyle>("3d-cartoon");
   const [customStylePrompt, setCustomStylePrompt] = useState("");
   const [sceneAssets, setSceneAssets] = useState<GeneratedSceneAsset[]>([]);
+  const [fetchedSceneAssets, setFetchedSceneAssets] = useState<
+    Record<number, WebSceneAsset[]>
+  >({});
+  const [selectedSceneAsset, setSelectedSceneAsset] = useState<
+    Record<number, WebSceneAsset>
+  >({});
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
   const [bgmAudioUrl, setBgmAudioUrl] = useState<string | null>(null);
   const [finalVideoUrl, setFinalVideoUrl] = useState<string | null>(null);
@@ -121,6 +173,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         setCustomStylePrompt,
         sceneAssets,
         setSceneAssets,
+        fetchedSceneAssets,
+        setFetchedSceneAssets,
+        selectedSceneAsset,
+        setSelectedSceneAsset,
         ttsAudioUrl,
         setTtsAudioUrl,
         bgmAudioUrl,
