@@ -293,6 +293,26 @@ export function extractShoppingUrls(text: string): string[] {
   return all;
 }
 
+const PRODUCT_KEYWORDS_RE =
+  /광고|협찬|유료광고|내돈내산|꿀템|찐템|찐찐템|추천템|필수템|인생템|갓성비|가성비|갖고싶은|구매링크|제품정보|제품상세|상세정보|할인정보|리뷰|솔직후기|써보니|언박싱|개봉|쿠팡|링크|제휴|파트너스|공구|공동구매/i;
+
+/**
+ * 영상의 title + description 텍스트에서 "쇼핑/제품 관련 쇼츠"일 가능성을 점수화.
+ * 3점 이상: 쇼핑 URL 존재 (거의 확실한 제품 쇼츠)
+ * 1~2점: 제품 관련 키워드 포함
+ * 0점: 신호 없음
+ */
+export function productSignalScore(
+  title: string,
+  description: string,
+): number {
+  const combined = `${title} ${description}`;
+  let score = 0;
+  if (extractShoppingUrls(combined).length > 0) score += 3;
+  if (PRODUCT_KEYWORDS_RE.test(combined)) score += 1;
+  return score;
+}
+
 export async function verifyIsShort(videoId: string): Promise<boolean> {
   try {
     const res = await fetch(`https://www.youtube.com/shorts/${videoId}`, {

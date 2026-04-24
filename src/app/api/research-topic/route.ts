@@ -7,6 +7,7 @@ import {
   filterActualShorts,
   getTopComments,
   extractShoppingUrls,
+  productSignalScore,
   SearchItem,
   VideoStats,
 } from "@/lib/youtube";
@@ -240,22 +241,45 @@ export async function POST(req: NextRequest) {
     searched = searched.filter((s) => stats[s.videoId]?.isShorts);
     searched = await filterActualShorts(searched);
 
-    const topShorts = [...searched]
-      .sort(
-        (a, b) =>
-          (stats[b.videoId]?.views || 0) - (stats[a.videoId]?.views || 0),
-      )
-      .slice(0, Math.min(20, Math.max(3, Number(maxVideos))));
+    // 사전 필터: title/description에 쇼핑 신호 있는 영상만 우선
+    const scoredShorts = searched.map((s) => {
+      const v = stats[s.videoId];
+      return {
+        item: s,
+        views: v?.views || 0,
+        score: productSignalScore(v?.title || "", v?.description || ""),
+      };
+    });
+
+    const hasSignal = scoredShorts
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score || b.views - a.views);
+
+    const maxV = Math.min(20, Math.max(3, Number(maxVideos)));
+    let topShorts: SearchItem[];
+    let filteredOutCount = 0;
+
+    if (hasSignal.length >= 3) {
+      // 신호 있는 영상만 사용
+      topShorts = hasSignal.slice(0, maxV).map((x) => x.item);
+      filteredOutCount = searched.length - hasSignal.length;
+    } else {
+      // 신호가 너무 적으면 조회수 fallback (결과 보장)
+      topShorts = scoredShorts
+        .sort((a, b) => b.score - a.score || b.views - a.views)
+        .slice(0, maxV)
+        .map((x) => x.item);
+    }
 
     if (topShorts.length === 0) {
       return NextResponse.json(
-        { error: "실제 쇼츠가 없습니다." },
+        { error: "분석할 쇼츠가 없습니다." },
         { status: 404 },
       );
     }
 
     // 2. 각 쇼츠 분석 (병렬): description + 댓글 + URL + 영상 → 제품 추출
-    const perVideo = await Promise.all(
+    const perVideoAll = await Promise.all(
       topShorts.map(async (s) => {
         const info = stats[s.videoId];
         const title = info?.title || "";
@@ -279,6 +303,10 @@ export async function POST(req: NextRequest) {
         };
       }),
     );
+
+    // 사후 필터: 제품이 0개 추출된 영상은 제외
+    const perVideo = perVideoAll.filter((v) => v.products.length > 0);
+    const zeroProductCount = perVideoAll.length - perVideo.length;
 
     // 3. 제품 중복 제거 + 소스 누적
     const productMap = new Map<string, ProductWithSources>();
@@ -328,13 +356,13 @@ export async function POST(req: NextRequest) {
       string,
       Pick<VideoStats, "title" | "views" | "thumbnail">
     > = {};
-    for (const s of topShorts) {
-      const v = stats[s.videoId];
-      if (v) {
-        videoStats[s.videoId] = {
-          title: v.title,
-          views: v.views,
-          thumbnail: v.thumbnail,
+    for (const v of perVideo) {
+      const info = stats[v.videoId];
+      if (info) {
+        videoStats[v.videoId] = {
+          title: info.title,
+          views: info.views,
+          thumbnail: info.thumbnail,
         };
       }
     }
@@ -344,6 +372,12 @@ export async function POST(req: NextRequest) {
       products: withCoupang,
       videos: videoStats,
       coupangEnabled: hasCoupangKeys(),
+      filter: {
+        prefilteredOut: filteredOutCount,
+        analyzed: topShorts.length,
+        zeroProductSkipped: zeroProductCount,
+        kept: perVideo.length,
+      },
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "서버 오류";

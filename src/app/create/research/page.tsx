@@ -43,6 +43,12 @@ type ApiResponse = {
   products: ProductResult[];
   videos: Record<string, { title: string; views: number; thumbnail: string }>;
   coupangEnabled: boolean;
+  filter?: {
+    prefilteredOut: number;
+    analyzed: number;
+    zeroProductSkipped: number;
+    kept: number;
+  };
   error?: string;
 };
 
@@ -250,11 +256,21 @@ export default function CreateResearchPage() {
 
       {result && (
         <>
-          <section className="flex items-center justify-between">
-            <div className="text-sm text-zinc-600 dark:text-zinc-400">
-              주제 <span className="font-semibold">&ldquo;{result.topic}&rdquo;</span>에서
-              추출된 제품 <span className="font-semibold">{result.products.length}</span>개
-              (영상 {Object.keys(result.videos).length}개)
+          <section className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="text-sm text-zinc-600 dark:text-zinc-400 space-y-1">
+              <div>
+                주제 <span className="font-semibold">&ldquo;{result.topic}&rdquo;</span>에서
+                추출된 제품 <span className="font-semibold">{result.products.length}</span>개
+                (제품 있는 영상 {Object.keys(result.videos).length}개)
+              </div>
+              {result.filter && (
+                <div className="text-xs text-zinc-500">
+                  🔎 사전 필터 <b>{result.filter.prefilteredOut}</b>개 제외
+                  (쇼핑 신호 없음) · 분석한 영상{" "}
+                  <b>{result.filter.analyzed}</b>개 중{" "}
+                  <b>{result.filter.zeroProductSkipped}</b>개는 제품 추출 실패로 스킵
+                </div>
+              )}
             </div>
             {!result.coupangEnabled && (
               <div className="text-xs text-amber-600 dark:text-amber-400">
