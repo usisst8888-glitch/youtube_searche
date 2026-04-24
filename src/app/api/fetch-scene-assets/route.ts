@@ -111,6 +111,13 @@ function hasKoreanChars(s: string): boolean {
   return /[ㄱ-힝]/.test(s);
 }
 
+function koreanRatio(s: string): number {
+  const kor = s.match(/[ㄱ-힝]/g)?.length || 0;
+  const nonSpace = s.replace(/\s/g, "").length;
+  if (nonSpace === 0) return 0;
+  return kor / nonSpace;
+}
+
 async function searchYoutubeShorts(
   query: string,
   limit = 2,
@@ -121,33 +128,30 @@ async function searchYoutubeShorts(
   if (!key) return [];
   try {
     const published = new Date(
-      Date.now() - 365 * 24 * 60 * 60 * 1000,
+      Date.now() - 3 * 365 * 24 * 60 * 60 * 1000,
     ).toISOString();
-    let searched = await searchShorts(key, query, 30, region, lang, published);
+    // 풀 확대: 50개 (최대) — 이후 필터링하고 남는 게 적을 수 있어서
+    let searched = await searchShorts(key, query, 50, region, lang, published);
     if (searched.length === 0) return [];
     const stats = await getVideoStats(
       key,
       searched.map((s) => s.videoId),
     );
     searched = searched.filter((s) => stats[s.videoId]?.isShorts);
-    searched = await filterActualShorts(searched);
 
-    // 🚫 한국 영상 배제: 채널명 또는 영상 제목이 한글 주도인 경우
+    // 한국 채널 배제 — 채널명 기준만, 70% 이상 한글일 때만 탈락 (관대하게)
+    //                제목에 한글이 있어도 통과 (외국 리뷰어가 제품 이름 한글 병기 가능)
     searched = searched.filter((s) => {
-      const title = stats[s.videoId]?.title || "";
       const channel = s.channelTitle || "";
-      const mostlyKoreanTitle =
-        hasKoreanChars(title) &&
-        (title.match(/[ㄱ-힝]/g)?.length || 0) >
-          title.replace(/\s/g, "").length * 0.3;
-      const mostlyKoreanChannel =
-        hasKoreanChars(channel) &&
-        (channel.match(/[ㄱ-힝]/g)?.length || 0) >
-          channel.replace(/\s/g, "").length * 0.3;
-      return !mostlyKoreanTitle && !mostlyKoreanChannel;
+      return !hasKoreanChars(channel) || koreanRatio(channel) < 0.7;
     });
 
-    const sorted = [...searched].sort(
+    // 실제 쇼츠 URL 검증은 "가능하면" 적용 (너무 엄격하면 결과 0)
+    const verified = await filterActualShorts(searched);
+    // 검증 통과분이 충분하면 그것만, 아니면 원본 유지
+    const finalList = verified.length >= limit ? verified : searched;
+
+    const sorted = [...finalList].sort(
       (a, b) =>
         (stats[b.videoId]?.views || 0) - (stats[a.videoId]?.views || 0),
     );
@@ -385,13 +389,11 @@ async function extractSearchQueries(
 
 ## 과제
 
-### 1) videoQueries (YouTube 영상 검색용, 한국 외 국가 크리에이터 대상)
-- **2개 생성**: 한국어 1개 + **영어 1개**
-- 영어는 국제적으로 이 제품이 검색 가능한 형태로
-  (예: 홈런볼 → "Korean Homerun Ball cookie", "Korean snack home run ball")
-- 한국어는 제품이 해외 리뷰/ASMR 영상에서 다뤄질 때 뜰 만한 형태
-- 각 3~8단어
-- 대사 구어체 금지, **시각 주제** 중심
+### 1) videoQueries (YouTube Shorts 검색용)
+- **2~3개 생성**. 가능한 **짧고 일반적인** 키워드로.
+- 제품명 중심 (2~4단어)
+- **구절 금지** ("Korean X cookie review" 같은 건 ❌). 단순 명사 조합만.
+- 한국어/영어 섞어도 OK (외국 크리에이터도 brand 이름으로는 검색됨)
 
 ### 2) imageQueries (구글 이미지 검색용, 전세계 OK)
 - **2~3개 한국어**
@@ -402,13 +404,15 @@ async function extractSearchQueries(
 
 대본: "바삭한 튀김과 부드러운 크림의 조합"
 제품: "홈런볼"
-→ videoQueries: ["홈런볼 단면 크림", "Korean Homerun Ball cream snack"]
+→ videoQueries: ["홈런볼", "homerun ball snack", "홈런볼 단면"]
 → imageQueries: ["홈런볼 단면", "홈런볼 크림", "홈런볼 쪼갠 모습"]
 
 대본: "여러분 이 동그란 모양 그냥 만든 건 줄 알았어요?"
 제품: "홈런볼"
-→ videoQueries: ["홈런볼 해태 과자", "Korean Home Run Ball snack review"]
+→ videoQueries: ["홈런볼", "homerun ball", "홈런볼 해태"]
 → imageQueries: ["홈런볼 해태", "홈런볼 클로즈업", "홈런볼 포장지"]
+
+**짧고 단순하게. 실제 유튜브 검색창에 사람이 치는 스타일로.**
 
 JSON으로 반환.`;
 
