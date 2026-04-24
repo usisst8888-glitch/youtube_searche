@@ -107,6 +107,10 @@ async function pMapLimit<T, R>(
   return out;
 }
 
+function hasKoreanChars(s: string): boolean {
+  return /[ㄱ-힝]/.test(s);
+}
+
 async function searchYoutubeShorts(
   query: string,
   limit = 2,
@@ -119,7 +123,7 @@ async function searchYoutubeShorts(
     const published = new Date(
       Date.now() - 365 * 24 * 60 * 60 * 1000,
     ).toISOString();
-    let searched = await searchShorts(key, query, 20, region, lang, published);
+    let searched = await searchShorts(key, query, 30, region, lang, published);
     if (searched.length === 0) return [];
     const stats = await getVideoStats(
       key,
@@ -127,6 +131,22 @@ async function searchYoutubeShorts(
     );
     searched = searched.filter((s) => stats[s.videoId]?.isShorts);
     searched = await filterActualShorts(searched);
+
+    // 🚫 한국 영상 배제: 채널명 또는 영상 제목이 한글 주도인 경우
+    searched = searched.filter((s) => {
+      const title = stats[s.videoId]?.title || "";
+      const channel = s.channelTitle || "";
+      const mostlyKoreanTitle =
+        hasKoreanChars(title) &&
+        (title.match(/[ㄱ-힝]/g)?.length || 0) >
+          title.replace(/\s/g, "").length * 0.3;
+      const mostlyKoreanChannel =
+        hasKoreanChars(channel) &&
+        (channel.match(/[ㄱ-힝]/g)?.length || 0) >
+          channel.replace(/\s/g, "").length * 0.3;
+      return !mostlyKoreanTitle && !mostlyKoreanChannel;
+    });
+
     const sorted = [...searched].sort(
       (a, b) =>
         (stats[b.videoId]?.views || 0) - (stats[a.videoId]?.views || 0),
@@ -146,18 +166,58 @@ async function searchYoutubeShorts(
   }
 }
 
+async function googleCseImageSearch(
+  query: string,
+  limit: number,
+): Promise<SceneAsset[]> {
+  const key = process.env.GOOGLE_CSE_KEY || process.env.YOUTUBE_API_KEY;
+  const cx = process.env.GOOGLE_CSE_ID;
+  if (!key || !cx) return [];
+  try {
+    const url = new URL("https://www.googleapis.com/customsearch/v1");
+    url.searchParams.set("key", key);
+    url.searchParams.set("cx", cx);
+    url.searchParams.set("q", query);
+    url.searchParams.set("searchType", "image");
+    url.searchParams.set("num", String(Math.min(10, limit)));
+    url.searchParams.set("safe", "active");
+    const res = await fetch(url.toString());
+    if (!res.ok) return [];
+    const data = await res.json();
+    const items = (data.items || []) as {
+      link?: string;
+      image?: { thumbnailLink?: string; contextLink?: string };
+      title?: string;
+      displayLink?: string;
+    }[];
+    return items.slice(0, limit).map<SceneAsset>((it) => ({
+      kind: "web-image",
+      imageUrl: it.link || "",
+      sourceUrl: it.image?.contextLink || it.link || "",
+      title: it.title,
+      siteName: it.displayLink,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 async function findWebImages(
   query: string,
   limit = 3,
 ): Promise<SceneAsset[]> {
+  // 1) Google Custom Search (이미지 검색) — 키 있을 때 우선
+  const cseResults = await googleCseImageSearch(query, limit * 2);
+  if (cseResults.length >= limit) {
+    return cseResults.slice(0, limit);
+  }
+
+  // 2) Fallback: Gemini가 Google 검색 → 페이지 URL → og:image 파싱
   try {
     const ai = getGeminiClient();
-    const prompt = `Find 10 product page URLs (from US shopping/brand sites) related to this keyword.
-Priority: Amazon, Walmart, Target, Best Buy, eBay, official brand sites, Etsy. Each page must have a real product image.
-
-Keyword: "${query}"
-
-Return ONLY URLs, one per line. No other text.`;
+    const prompt = `Search Google for pages that contain clear images of "${query}".
+Any country, any language (Korean sites, blogs, shopping pages, news, etc. all OK).
+Return 10 page URLs, one per line. Each page must visibly show the subject.`;
     const response = await withRetry(() =>
       ai.models.generateContent({
         model: FLASH_MODEL,
@@ -203,16 +263,17 @@ Return ONLY URLs, one per line. No other text.`;
     });
 
     const seen = new Set<string>();
-    const unique: SceneAsset[] = [];
+    for (const p of cseResults) seen.add(p.kind === "web-image" ? p.imageUrl : "");
+    const unique: SceneAsset[] = [...cseResults];
     for (const p of pages) {
       if (!p || seen.has(p.imageUrl)) continue;
       seen.add(p.imageUrl);
       unique.push(p);
       if (unique.length >= limit) break;
     }
-    return unique;
+    return unique.slice(0, limit);
   } catch {
-    return [];
+    return cseResults.slice(0, limit);
   }
 }
 
