@@ -4,8 +4,23 @@ import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useProject } from "../context";
 
+const TOPIC_PRESETS = [
+  "늦은 밤 혼자 있는 방",
+  "퇴근길 지하철",
+  "엄마와의 통화",
+  "오랜만에 만난 친구",
+  "비 오는 주말 오후",
+  "첫 자취 시작한 날",
+  "시험 망친 날 밤",
+  "이직을 고민하는 새벽",
+  "연인과 헤어진 다음 날",
+  "강아지와의 평범한 하루",
+];
+
 export default function AnalyzePage() {
   const {
+    storyTopic,
+    setStoryTopic,
     productName,
     setProductName,
     productResearch,
@@ -66,6 +81,7 @@ export default function AnalyzePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          storyTopic,
           productName,
           productImageDataUrls: productImages.map((p) => p.dataUrl),
         }),
@@ -86,10 +102,38 @@ export default function AnalyzePage() {
   return (
     <div className="space-y-6">
       <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-        <h2 className="font-semibold mb-4">상품 입력</h2>
+        <h2 className="font-semibold mb-4">입력</h2>
 
         <div className="space-y-4">
           <div>
+            <label className="block text-sm font-medium mb-1">
+              🎭 스토리 주제 / 장면
+              <span className="ml-2 text-xs text-zinc-500">
+                (이게 중심, 제품은 소품으로 녹아듦)
+              </span>
+            </label>
+            <textarea
+              rows={2}
+              value={storyTopic}
+              onChange={(e) => setStoryTopic(e.target.value)}
+              placeholder="예: 야근 끝나고 늦은 밤 퇴근길, 비 오는 버스 안에서"
+              className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
+            />
+            <div className="mt-2 flex flex-wrap gap-1">
+              {TOPIC_PRESETS.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setStoryTopic(t)}
+                  className="text-xs px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-800 hover:bg-red-100 dark:hover:bg-red-900/30"
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="border-t border-zinc-200 dark:border-zinc-800 pt-4">
             <label className="block text-sm font-medium mb-1">상품명</label>
             <input
               type="text"
@@ -99,8 +143,7 @@ export default function AnalyzePage() {
               className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
             />
             <p className="mt-1 text-xs text-zinc-500">
-              Gemini가 웹 검색으로 타겟·생활 장면·감정 맥락을 조사한 뒤,
-              그걸 소재로 5씬 스토리를 짭니다. (제품 리뷰/광고 아님)
+              주제가 스토리의 뼈대이고, 이 상품은 장면 속 소품으로 자연스럽게 등장합니다.
             </p>
           </div>
 
@@ -176,7 +219,7 @@ export default function AnalyzePage() {
             disabled={loading}
             className="bg-red-500 hover:bg-red-600 disabled:bg-zinc-400 text-white font-semibold px-5 py-2.5 rounded-lg"
           >
-            {loading ? "생성 중... (20~40초)" : "🔍 상품 조사 + 스토리 생성"}
+            {loading ? "생성 중... (20~40초)" : "🎬 스토리 생성"}
           </button>
 
           {error && (

@@ -44,6 +44,9 @@ type ProjectState = {
   analysis: ScriptAnalysis | null;
   setAnalysis: (a: ScriptAnalysis | null) => void;
 
+  storyTopic: string;
+  setStoryTopic: (v: string) => void;
+
   productName: string;
   setProductName: (v: string) => void;
 
@@ -82,6 +85,7 @@ const ProjectContext = createContext<ProjectState | null>(null);
 
 export function ProjectProvider({ children }: { children: ReactNode }) {
   const [analysis, setAnalysis] = useState<ScriptAnalysis | null>(null);
+  const [storyTopic, setStoryTopic] = useState("");
   const [productName, setProductName] = useState("");
   const [productResearch, setProductResearch] = useState("");
   const [storyPremise, setStoryPremise] = useState("");
@@ -99,6 +103,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       value={{
         analysis,
         setAnalysis,
+        storyTopic,
+        setStoryTopic,
         productName,
         setProductName,
         productResearch,
