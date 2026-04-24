@@ -4,18 +4,11 @@ import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useProject } from "../context";
 
-const TOPIC_PRESETS = [
-  "늦은 밤 혼자 있는 방",
-  "퇴근길 지하철",
-  "엄마와의 통화",
-  "오랜만에 만난 친구",
-  "비 오는 주말 오후",
-  "첫 자취 시작한 날",
-  "시험 망친 날 밤",
-  "이직을 고민하는 새벽",
-  "연인과 헤어진 다음 날",
-  "강아지와의 평범한 하루",
-];
+type SuggestedTopic = {
+  title: string;
+  format: string;
+  hook: string;
+};
 
 export default function AnalyzePage() {
   const {
@@ -37,6 +30,38 @@ export default function AnalyzePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
+
+  const [topicKeyword, setTopicKeyword] = useState("");
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestedTopics, setSuggestedTopics] = useState<SuggestedTopic[]>([]);
+  const [referenceTitles, setReferenceTitles] = useState<string[]>([]);
+
+  const handleSuggestTopics = async () => {
+    setError("");
+    if (!topicKeyword.trim()) {
+      setError("주제 찾기용 키워드를 입력하세요.");
+      return;
+    }
+    setSuggesting(true);
+    try {
+      const res = await fetch("/api/suggest-topics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          keyword: topicKeyword,
+          productName,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "주제 생성 실패");
+      setSuggestedTopics(data.topics || []);
+      setReferenceTitles(data.referenceTitles || []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   const readFiles = useCallback(
     async (files: FileList | File[]) => {
@@ -105,6 +130,78 @@ export default function AnalyzePage() {
         <h2 className="font-semibold mb-4">입력</h2>
 
         <div className="space-y-4">
+          <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-lg p-4">
+            <label className="block text-sm font-medium mb-1">
+              🔍 주제 아이디어 찾기
+              <span className="ml-2 text-xs text-zinc-500">
+                (선택 — 키워드 주면 YouTube 트렌드 분석해서 주제 10개 추천)
+              </span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={topicKeyword}
+                onChange={(e) => setTopicKeyword(e.target.value)}
+                placeholder="예: 자취 꿀템 / 30대 필수템 / 후회 안 하는 소비"
+                className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !suggesting) handleSuggestTopics();
+                }}
+              />
+              <button
+                type="button"
+                onClick={handleSuggestTopics}
+                disabled={suggesting}
+                className="bg-amber-600 hover:bg-amber-700 disabled:bg-zinc-400 text-white text-sm font-medium px-4 py-2 rounded-lg whitespace-nowrap"
+              >
+                {suggesting ? "분석 중..." : "주제 추천받기"}
+              </button>
+            </div>
+
+            {suggestedTopics.length > 0 && (
+              <div className="mt-3 space-y-2">
+                <p className="text-xs text-zinc-500">
+                  👇 클릭하면 아래 주제 필드에 자동 입력됩니다
+                </p>
+                <ol className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {suggestedTopics.map((t, i) => (
+                    <li key={i}>
+                      <button
+                        type="button"
+                        onClick={() => setStoryTopic(t.title)}
+                        className={`w-full text-left border rounded-lg p-2.5 transition-colors ${
+                          storyTopic === t.title
+                            ? "border-red-500 bg-red-50 dark:bg-red-950/30"
+                            : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-zinc-400"
+                        }`}
+                      >
+                        <div className="text-sm font-medium">{t.title}</div>
+                        <div className="text-xs text-zinc-500 mt-0.5">
+                          <span className="px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded mr-1">
+                            {t.format}
+                          </span>
+                          {t.hook}
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+                {referenceTitles.length > 0 && (
+                  <details className="mt-2 text-xs text-zinc-500">
+                    <summary className="cursor-pointer">
+                      🔎 참고한 트렌딩 쇼츠 제목 {referenceTitles.length}개
+                    </summary>
+                    <ul className="mt-1 ml-4 list-disc space-y-0.5">
+                      {referenceTitles.map((t, i) => (
+                        <li key={i}>{t}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            )}
+          </div>
+
           <div>
             <label className="block text-sm font-medium mb-1">
               🎭 스토리 주제 / 장면
@@ -116,21 +213,9 @@ export default function AnalyzePage() {
               rows={2}
               value={storyTopic}
               onChange={(e) => setStoryTopic(e.target.value)}
-              placeholder="예: 야근 끝나고 늦은 밤 퇴근길, 비 오는 버스 안에서"
+              placeholder="예: 자취 1년차 vs 5년차 필수템 비교 (위에서 추천받거나 직접 입력)"
               className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
             />
-            <div className="mt-2 flex flex-wrap gap-1">
-              {TOPIC_PRESETS.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setStoryTopic(t)}
-                  className="text-xs px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-800 hover:bg-red-100 dark:hover:bg-red-900/30"
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
           </div>
 
           <div className="border-t border-zinc-200 dark:border-zinc-800 pt-4">
