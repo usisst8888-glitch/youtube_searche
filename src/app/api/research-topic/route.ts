@@ -2,16 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   searchShorts,
   getVideoStats,
+  getChannelUploads,
+  getRecentVideoIds,
   filterActualShorts,
   getTopComments,
   extractShoppingUrls,
   isProductReviewTitle,
+  median,
   SearchItem,
 } from "@/lib/youtube";
 import {
   fetchYoutubeShoppingProducts,
   YoutubeShoppingProduct,
 } from "@/lib/youtube-shopping";
+import { channelBaselineCache } from "@/lib/cache";
 import { hasCoupangKeys } from "@/lib/coupang";
 
 export const maxDuration = 180;
@@ -19,6 +23,8 @@ export const runtime = "nodejs";
 
 type VideoResult = {
   videoId: string;
+  channelId: string;
+  channelTitle: string;
   title: string;
   thumbnail: string;
   views: number;
@@ -27,6 +33,8 @@ type VideoResult = {
   topComments: string[];
   shoppingUrls: string[];
   shoppingProducts: YoutubeShoppingProduct[];
+  channelMedian: number | null;
+  viewRatio: number | null;
 };
 
 function truncate(s: string, max: number): string {
@@ -127,6 +135,8 @@ export async function POST(req: NextRequest) {
       const urls = extractShoppingUrls(allText);
       const result: VideoResult = {
         videoId: s.videoId,
+        channelId: s.channelId,
+        channelTitle: s.channelTitle,
         title: info?.title || "",
         thumbnail: info?.thumbnail || "",
         views: info?.views || 0,
@@ -135,6 +145,8 @@ export async function POST(req: NextRequest) {
         topComments: comments.slice(0, 3),
         shoppingUrls: urls,
         shoppingProducts,
+        channelMedian: null,
+        viewRatio: null,
       };
       return result;
     });
@@ -147,6 +159,72 @@ export async function POST(req: NextRequest) {
     const titleReviewCount = ordered.filter((s) =>
       isProductReviewTitle(stats[s.videoId]?.title || ""),
     ).length;
+
+    // 5. 각 영상 채널의 쇼츠 중앙값 대비 조회수 비율 계산
+    if (withShopping.length > 0) {
+      const uniqueChannels = Array.from(
+        new Set(withShopping.map((v) => v.channelId).filter(Boolean)),
+      );
+      try {
+        const channelInfo = await getChannelUploads(
+          youtubeKey,
+          uniqueChannels,
+        );
+        const baselineMap: Record<string, number | null> = {};
+
+        await pMapLimit(
+          Object.entries(channelInfo),
+          5,
+          async ([chId, info]) => {
+            const cached = channelBaselineCache.get(chId);
+            if (cached !== undefined) {
+              baselineMap[chId] = cached ? cached.median : null;
+              return;
+            }
+            try {
+              const recentIds = await getRecentVideoIds(
+                youtubeKey,
+                info.uploads,
+                30,
+              );
+              if (!recentIds.length) {
+                channelBaselineCache.set(chId, null);
+                baselineMap[chId] = null;
+                return;
+              }
+              const recentStats = await getVideoStats(youtubeKey, recentIds);
+              const shortsViews = Object.values(recentStats)
+                .filter((v) => v.isShorts && v.views > 0)
+                .map((v) => v.views);
+              if (shortsViews.length >= 5) {
+                const entry = {
+                  median: median(shortsViews),
+                  max: Math.max(...shortsViews),
+                  count: shortsViews.length,
+                };
+                channelBaselineCache.set(chId, entry);
+                baselineMap[chId] = entry.median;
+              } else {
+                channelBaselineCache.set(chId, null);
+                baselineMap[chId] = null;
+              }
+            } catch {
+              baselineMap[chId] = null;
+            }
+          },
+        );
+
+        for (const v of withShopping) {
+          const medianViews = baselineMap[v.channelId];
+          if (medianViews && medianViews > 0) {
+            v.channelMedian = Math.round(medianViews);
+            v.viewRatio = Math.round((v.views / medianViews) * 10) / 10;
+          }
+        }
+      } catch {
+        // ignore baseline errors
+      }
+    }
 
     if (withShopping.length === 0) {
       return NextResponse.json(

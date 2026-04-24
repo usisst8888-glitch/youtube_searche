@@ -27,6 +27,8 @@ type ShoppingProduct = {
 
 type VideoResult = {
   videoId: string;
+  channelId: string;
+  channelTitle: string;
   title: string;
   thumbnail: string;
   views: number;
@@ -35,6 +37,8 @@ type VideoResult = {
   topComments: string[];
   shoppingUrls: string[];
   shoppingProducts: ShoppingProduct[];
+  channelMedian: number | null;
+  viewRatio: number | null;
 };
 
 type ApiResponse = {
@@ -352,7 +356,7 @@ export default function CreateResearchPage() {
                   <img
                     src={v.thumbnail}
                     alt={v.title}
-                    className="w-32 aspect-[9/16] object-cover rounded bg-zinc-100 dark:bg-zinc-800 shrink-0"
+                    className="w-24 aspect-[9/16] object-cover rounded bg-zinc-100 dark:bg-zinc-800 shrink-0"
                   />
                   <div className="flex-1 min-w-0">
                     <a
@@ -364,71 +368,99 @@ export default function CreateResearchPage() {
                       {v.title}
                     </a>
                     <div className="text-xs text-zinc-500 mt-1">
+                      <span className="font-medium text-zinc-600 dark:text-zinc-400">
+                        {v.channelTitle}
+                      </span>
+                      {" · "}
                       {v.views.toLocaleString()} 조회 · {v.publishedAt}
                     </div>
-                    <div className="mt-1 text-xs">
-                      <span className="inline-block bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded">
-                        🛍️ 제품 보기 태그 {v.shoppingProducts.length}개
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                      <span className="inline-block bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs px-2 py-0.5 rounded">
+                        🛍️ 태그 {v.shoppingProducts.length}개
                       </span>
+                      {v.viewRatio !== null && (
+                        <span
+                          className={`inline-block text-xs px-2 py-0.5 rounded font-medium ${
+                            v.viewRatio >= 3
+                              ? "bg-red-500 text-white"
+                              : v.viewRatio >= 1.5
+                                ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300"
+                                : v.viewRatio >= 1
+                                  ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
+                                  : "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                          }`}
+                          title={`채널 쇼츠 중앙값 ${v.channelMedian?.toLocaleString()} 대비`}
+                        >
+                          {v.viewRatio >= 3
+                            ? "🔥 "
+                            : v.viewRatio >= 1.5
+                              ? "📈 "
+                              : v.viewRatio < 1
+                                ? "📉 "
+                                : ""}
+                          채널 평균 대비 {v.viewRatio.toFixed(1)}x
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {v.shoppingProducts.map((p, i) => (
                     <div
                       key={`${v.videoId}-${i}`}
-                      className="border border-zinc-200 dark:border-zinc-800 rounded-lg overflow-hidden"
+                      className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-1.5 flex gap-2"
                     >
-                      <a
-                        href={p.buyUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block"
-                      >
-                        {p.thumbnailUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={p.thumbnailUrl}
-                            alt={p.title}
-                            className="w-full aspect-square object-cover bg-zinc-50 dark:bg-zinc-800"
-                          />
-                        ) : (
-                          <div className="w-full aspect-square bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-400 text-xs">
-                            이미지 없음
-                          </div>
-                        )}
-                      </a>
-                      <div className="p-2 space-y-1">
-                        <div className="text-xs line-clamp-2 min-h-[2.5rem]">
-                          {p.title}
+                      {p.thumbnailUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={p.thumbnailUrl}
+                          alt={p.title}
+                          className="w-14 h-14 object-cover rounded bg-zinc-50 dark:bg-zinc-800 shrink-0"
+                        />
+                      ) : (
+                        <div className="w-14 h-14 bg-zinc-100 dark:bg-zinc-800 rounded flex items-center justify-center text-zinc-400 text-[10px] shrink-0">
+                          이미지
                         </div>
-                        {p.price && (
-                          <div className="text-sm font-bold">{p.price}</div>
-                        )}
-                        {p.merchantName && (
-                          <div className="text-xs text-zinc-500">
-                            {p.merchantName}
+                      )}
+                      <div className="flex-1 min-w-0 flex flex-col justify-between">
+                        <div>
+                          <div className="text-[11px] leading-tight line-clamp-2">
+                            {p.title}
                           </div>
-                        )}
-                        <div className="flex gap-1 pt-1">
-                          {p.buyUrl && (
-                            <a
-                              href={p.buyUrl}
-                              target="_blank"
-                              rel="noreferrer sponsored"
-                              className="flex-1 text-center text-xs bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded px-2 py-1"
-                            >
-                              🛒 구매
-                            </a>
+                          {p.merchantName && (
+                            <div className="text-[10px] text-zinc-500 line-clamp-1 mt-0.5">
+                              {p.merchantName}
+                            </div>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => useThisProduct(p.title)}
-                            className="flex-1 text-xs bg-red-500 hover:bg-red-600 text-white rounded px-2 py-1"
-                          >
-                            이걸로 →
-                          </button>
+                        </div>
+                        <div className="flex items-center justify-between gap-1 mt-1">
+                          {p.price ? (
+                            <div className="text-xs font-bold truncate">
+                              {p.price}
+                            </div>
+                          ) : (
+                            <div />
+                          )}
+                          <div className="flex gap-0.5 shrink-0">
+                            {p.buyUrl && (
+                              <a
+                                href={p.buyUrl}
+                                target="_blank"
+                                rel="noreferrer sponsored"
+                                className="text-[10px] px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded"
+                              >
+                                구매
+                              </a>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => useThisProduct(p.title)}
+                              className="text-[10px] px-1.5 py-0.5 bg-red-500 hover:bg-red-600 text-white rounded"
+                            >
+                              선택
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
