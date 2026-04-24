@@ -21,6 +21,7 @@ export default function AnalyzePage() {
     setFetchedSceneAssets,
     selectedSceneAsset,
     setSelectedSceneAsset,
+    storyAngleData,
   } = useProject();
 
   const [loading, setLoading] = useState(false);
@@ -45,6 +46,7 @@ export default function AnalyzePage() {
           storyTopic,
           productName,
           productImageDataUrls: [],
+          angleData: storyAngleData,
         }),
       });
       const data = await res.json();
@@ -145,6 +147,25 @@ export default function AnalyzePage() {
           에서 선택하면 자동 입력. 대본 생성 후 각 씬마다 YouTube /
           쇼핑이미지 / TikTok에서 소재를 가져와서 고를 수 있어요.
         </p>
+
+        {storyAngleData && (
+          <div className="mb-4 border border-amber-300 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 rounded-lg p-3">
+            <div className="text-xs font-medium text-amber-700 dark:text-amber-300 mb-1">
+              📚 썰 라이브러리에서 선택된 썰 (이 내용으로 대본 생성)
+            </div>
+            <div className="text-sm font-semibold">{storyAngleData.angle}</div>
+            {storyAngleData.hook && (
+              <div className="mt-1 text-xs italic text-zinc-700 dark:text-zinc-300">
+                &ldquo;{storyAngleData.hook}&rdquo;
+              </div>
+            )}
+            {storyAngleData.fact && (
+              <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400 whitespace-pre-wrap">
+                {storyAngleData.fact}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>

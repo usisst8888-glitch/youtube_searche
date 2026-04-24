@@ -47,7 +47,7 @@ const STATUS_LABELS: Record<StoryAngle["status"], string> = {
 
 export default function CreateResearchPage() {
   const router = useRouter();
-  const { setProductName, setStoryTopic } = useProject();
+  const { setProductName, setStoryTopic, setStoryAngleData } = useProject();
 
   // 발굴 폼
   const [category, setCategory] = useState("전체");
@@ -145,6 +145,14 @@ export default function CreateResearchPage() {
     await handleStatusChange(a.id, "producing");
     setProductName(a.product_name);
     setStoryTopic(a.angle);
+    setStoryAngleData({
+      id: a.id,
+      angle: a.angle,
+      hook: a.hook,
+      fact: a.fact,
+      sources: a.sources,
+      productCategory: a.product_category,
+    });
     router.push("/create/analyze");
   };
 

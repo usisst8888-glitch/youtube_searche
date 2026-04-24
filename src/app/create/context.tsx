@@ -40,6 +40,15 @@ export type GeneratedSceneAsset = {
   videoUrl?: string;
 };
 
+export type StoryAngleData = {
+  id: string;
+  angle: string;
+  hook: string | null;
+  fact: string | null;
+  sources: string[] | null;
+  productCategory: string | null;
+};
+
 export type WebSceneAsset =
   | {
       kind: "youtube-short";
@@ -83,6 +92,9 @@ type ProjectState = {
 
   storyPremise: string;
   setStoryPremise: (v: string) => void;
+
+  storyAngleData: StoryAngleData | null;
+  setStoryAngleData: (v: StoryAngleData | null) => void;
 
   generatedScenes: SceneScript[];
   setGeneratedScenes: (s: SceneScript[]) => void;
@@ -135,6 +147,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [productName, setProductName] = useState("");
   const [productResearch, setProductResearch] = useState("");
   const [storyPremise, setStoryPremise] = useState("");
+  const [storyAngleData, setStoryAngleData] = useState<StoryAngleData | null>(
+    null,
+  );
   const [generatedScenes, setGeneratedScenes] = useState<SceneScript[]>([]);
   const [productImages, setProductImages] = useState<ProductImage[]>([]);
   const [visualStyle, setVisualStyle] = useState<VisualStyle>("3d-cartoon");
@@ -163,6 +178,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         setProductResearch,
         storyPremise,
         setStoryPremise,
+        storyAngleData,
+        setStoryAngleData,
         generatedScenes,
         setGeneratedScenes,
         productImages,
