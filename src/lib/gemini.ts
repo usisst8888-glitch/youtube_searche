@@ -16,21 +16,23 @@ export function getGeminiClient(): GoogleGenAI {
 export const FLASH_MODEL = "gemini-2.5-flash-lite";
 export const FLASH_LITE_MODEL = "gemini-2.5-flash-lite";
 export const FLASH_FULL_MODEL = "gemini-2.5-flash";
-export const EMBEDDING_MODEL = "text-embedding-004";
+export const EMBEDDING_MODEL = "gemini-embedding-001";
+export const EMBEDDING_DIM = 768;
 
 /**
- * 여러 텍스트를 한 번에 임베딩. 각 768차원 float 배열 반환.
+ * 여러 텍스트를 768차원 임베딩으로 변환.
+ * gemini-embedding-001은 기본 3072차원이지만 outputDimensionality로 축소.
  */
 export async function embedTexts(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
   const ai = getGeminiClient();
   const out: number[][] = [];
-  // 배치 제한 (Gemini embedContent는 호출당 텍스트 1개씩 안전)
   for (const text of texts) {
     const res = await withRetry(() =>
       ai.models.embedContent({
         model: EMBEDDING_MODEL,
         contents: [{ role: "user", parts: [{ text }] }],
+        config: { outputDimensionality: EMBEDDING_DIM },
       }),
     );
     const values =
