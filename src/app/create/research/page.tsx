@@ -1,218 +1,202 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useProject } from "../context";
 
-type Subcategory = {
-  keyword: string;
-  description: string;
+type StoryAngle = {
+  id: string;
+  product_name: string;
+  product_category: string | null;
+  angle: string;
+  hook: string | null;
+  fact: string | null;
+  sources: string[] | null;
+  status: "idea" | "producing" | "done" | "skipped";
+  created_at: string;
 };
 
-type ShoppingProduct = {
-  title: string;
-  thumbnailUrl: string;
-  price: string;
-  merchantName: string;
-  buyUrl: string;
-  accessibilityText: string;
+type LibraryResponse = {
+  items: StoryAngle[];
+  total: number;
+  counts: { all: number; idea: number; producing: number; done: number; skipped: number };
 };
 
-type VideoResult = {
-  videoId: string;
-  channelId: string;
-  channelTitle: string;
-  title: string;
-  thumbnail: string;
-  views: number;
-  publishedAt: string;
-  descriptionPreview: string;
-  topComments: string[];
-  shoppingUrls: string[];
-  shoppingProducts: ShoppingProduct[];
-  channelMedian: number | null;
-  viewRatio: number | null;
-};
+const CATEGORIES = [
+  "전체",
+  "식품",
+  "뷰티",
+  "가전",
+  "생활",
+  "패션",
+  "IT",
+  "문구",
+  "주방",
+  "반려",
+  "스포츠",
+  "기타",
+];
 
-type ApiResponse = {
-  topic: string;
-  searchKeyword: string;
-  videos: VideoResult[];
-  coupangEnabled: boolean;
-  filter?: {
-    searched: number;
-    titleReviewMatches?: number;
-    inspected: number;
-    noShoppingSkipped?: number;
-    returned: number;
-  };
-  error?: string;
+const STATUS_LABELS: Record<StoryAngle["status"], string> = {
+  idea: "💡 아이디어",
+  producing: "🎬 제작 중",
+  done: "✅ 완료",
+  skipped: "❌ 스킵",
 };
 
 export default function CreateResearchPage() {
   const router = useRouter();
   const { setProductName, setStoryTopic } = useProject();
 
-  // Section ⓪: 대주제 → 소주제
-  const [bigTopic, setBigTopic] = useState("");
-  const [subFetching, setSubFetching] = useState(false);
-  const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
+  // 발굴 폼
+  const [category, setCategory] = useState("전체");
+  const [count, setCount] = useState(20);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverStatus, setDiscoverStatus] = useState("");
 
-  // Section ①: 주제로 제품 찾기
-  const [topic, setTopic] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<ApiResponse | null>(null);
+  // 라이브러리
+  const [library, setLibrary] = useState<LibraryResponse | null>(null);
+  const [libLoading, setLibLoading] = useState(false);
+  const [filterStatus, setFilterStatus] = useState<string>("idea");
+  const [filterCategory, setFilterCategory] = useState("전체");
+  const [search, setSearch] = useState("");
 
   const [error, setError] = useState("");
 
-  const handleSuggestSubcategories = async () => {
-    setError("");
-    if (!bigTopic.trim()) {
-      setError("대주제를 입력하세요.");
-      return;
-    }
-    setSubFetching(true);
+  const loadLibrary = useCallback(async () => {
+    setLibLoading(true);
     try {
-      const res = await fetch("/api/suggest-subcategories", {
+      const params = new URLSearchParams();
+      params.set("status", filterStatus);
+      params.set("category", filterCategory);
+      if (search.trim()) params.set("q", search.trim());
+      params.set("limit", "100");
+      const res = await fetch(`/api/story-library?${params}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "라이브러리 로드 실패");
+      setLibrary(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setLibLoading(false);
+    }
+  }, [filterStatus, filterCategory, search]);
+
+  useEffect(() => {
+    loadLibrary();
+  }, [loadLibrary]);
+
+  const handleDiscover = async () => {
+    setError("");
+    setDiscoverStatus("Gemini에 ${count * 1.6}개 후보 요청 중...");
+    setDiscovering(true);
+    try {
+      const res = await fetch("/api/discover-story-angles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bigTopic }),
+        body: JSON.stringify({ category, count }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "소주제 생성 실패");
-      setSubcategories(data.subcategories || []);
+      if (!res.ok) throw new Error(data.error || "발굴 실패");
+      setDiscoverStatus(
+        `✅ ${data.generated}개 신규 저장 (중복 ${data.duplicatesSkipped}개 스킵)`,
+      );
+      await loadLibrary();
     } catch (e) {
       setError(e instanceof Error ? e.message : "오류");
+      setDiscoverStatus("");
     } finally {
-      setSubFetching(false);
+      setDiscovering(false);
     }
   };
 
-  const handleResearch = async () => {
-    setError("");
-    if (!topic.trim()) {
-      setError("주제/키워드를 입력하세요.");
-      return;
-    }
-    setLoading(true);
-    setResult(null);
+  const handleStatusChange = async (
+    id: string,
+    status: StoryAngle["status"],
+  ) => {
     try {
-      const res = await fetch("/api/research-topic", {
-        method: "POST",
+      await fetch("/api/story-library", {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          topic,
-          searchKeyword: topic,
-          maxVideos: 15,
-        }),
+        body: JSON.stringify({ id, status }),
       });
-      const data: ApiResponse = await res.json();
-      if (!res.ok) throw new Error(data.error || "요청 실패");
-      setResult(data);
+      await loadLibrary();
     } catch (e) {
       setError(e instanceof Error ? e.message : "오류");
-    } finally {
-      setLoading(false);
     }
   };
 
-  const useSubcategory = (keyword: string) => {
-    setTopic(keyword);
+  const handleDelete = async (id: string) => {
+    if (!confirm("이 앵글을 삭제할까요?")) return;
+    try {
+      await fetch("/api/story-library", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      await loadLibrary();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    }
   };
 
-  const useThisProduct = (productName: string) => {
-    setProductName(productName);
-    setStoryTopic(topic);
+  const useThisAngle = async (a: StoryAngle) => {
+    await handleStatusChange(a.id, "producing");
+    setProductName(a.product_name);
+    setStoryTopic(a.angle);
     router.push("/create/analyze");
   };
 
   return (
     <div className="space-y-6">
-      {/* Section ⓪: 대주제 → 소주제 */}
+      {/* Section 1: 썰 발굴 */}
       <section className="bg-sky-50 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-900/40 rounded-xl p-6">
-        <h2 className="font-semibold mb-1">⓪ 대주제 → 소주제 (선택)</h2>
+        <h2 className="font-semibold mb-1">🔍 썰 발굴</h2>
         <p className="text-xs text-zinc-500 mb-4">
-          큰 카테고리를 입력하면 쇼츠 검색에 쓸 만한 세부 키워드 12개가 나옵니다.
-          키워드 클릭 시 아래 ① 섹션의 주제 필드에 자동 입력.
+          Gemini가 웹 검색으로 &ldquo;아는 줄 알았는데 몰랐던&rdquo; 제품 썰을
+          생성합니다. 임베딩 유사도로 기존 라이브러리와 자동 중복 제거.
         </p>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={bigTopic}
-            onChange={(e) => setBigTopic(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !subFetching)
-                handleSuggestSubcategories();
-            }}
-            placeholder="예: 골프 / 자취 / 뷰티 / 홈트 / 캠핑"
-            className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
-          />
+
+        <div className="flex flex-wrap gap-2 items-center">
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            className="border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
+          >
+            {CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={count}
+            onChange={(e) => setCount(parseInt(e.target.value, 10))}
+            className="border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
+          >
+            {[5, 10, 20, 30, 50].map((n) => (
+              <option key={n} value={n}>
+                {n}개씩
+              </option>
+            ))}
+          </select>
+
           <button
             type="button"
-            onClick={handleSuggestSubcategories}
-            disabled={subFetching}
-            className="bg-sky-600 hover:bg-sky-700 disabled:bg-zinc-400 text-white text-sm font-medium px-4 py-2 rounded-lg whitespace-nowrap"
+            onClick={handleDiscover}
+            disabled={discovering}
+            className="bg-sky-600 hover:bg-sky-700 disabled:bg-zinc-400 text-white text-sm font-semibold px-4 py-2 rounded-lg"
           >
-            {subFetching ? "생성 중..." : "소주제 찾기"}
+            {discovering ? "발굴 중... (30~60초)" : "✨ 썰 발굴"}
           </button>
-        </div>
-        {subcategories.length > 0 && (
-          <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-2">
-            {subcategories.map((s) => (
-              <button
-                key={s.keyword}
-                type="button"
-                onClick={() => useSubcategory(s.keyword)}
-                className={`text-left border rounded-lg p-2 transition-colors ${
-                  topic === s.keyword
-                    ? "border-red-500 bg-red-50 dark:bg-red-950/30"
-                    : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-sky-400"
-                }`}
-              >
-                <div className="text-sm font-medium">{s.keyword}</div>
-                <div className="text-xs text-zinc-500 line-clamp-1">
-                  {s.description}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
 
-      {/* Section ①: 주제로 제품 찾기 */}
-      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-        <h2 className="font-semibold mb-1">① 주제로 영상·제품 찾기</h2>
-        <p className="text-xs text-zinc-500 mb-4">
-          YouTube에서 주제 관련 쇼츠를 찾고,{" "}
-          <b>&ldquo;제품 보기&rdquo; (YouTube Shopping) 태그가 있는 영상만</b>{" "}
-          골라서 그 영상의 공식 태그 제품을 가져옵니다.
-        </p>
-        <label className="block text-sm font-medium mb-2">주제 / 키워드</label>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !loading) handleResearch();
-            }}
-            placeholder="예: 골프 연습도구 / 자취 꿀템 / 뷰티 필수템"
-            className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
-          />
-          <button
-            onClick={handleResearch}
-            disabled={loading}
-            className="bg-red-500 hover:bg-red-600 disabled:bg-zinc-400 text-white font-semibold px-5 py-2 rounded-lg whitespace-nowrap"
-          >
-            {loading ? "분석 중..." : "🔍 영상 찾기"}
-          </button>
+          {discoverStatus && (
+            <span className="text-xs text-zinc-500">{discoverStatus}</span>
+          )}
         </div>
-        {loading && (
-          <p className="mt-2 text-xs text-zinc-500">
-            쇼츠 검색 → 각 영상 쇼핑 태그 확인 → 채널 평균 계산, 약 30초~1분.
-          </p>
-        )}
+
         {error && (
           <div className="mt-3 text-sm text-red-600 dark:text-red-400">
             ⚠️ {error}
@@ -220,205 +204,206 @@ export default function CreateResearchPage() {
         )}
       </section>
 
-      {result && (
-        <>
-          <section className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="text-sm text-zinc-600 dark:text-zinc-400 space-y-1">
-              <div>
-                <b>{result.videos.length}</b>개 영상에서 YouTube Shopping
-                제품 태그를 찾았습니다
-              </div>
-              {result.filter && (
-                <div className="text-xs text-zinc-500">
-                  🔎 검색한 쇼츠 {result.filter.searched}개 중 쇼핑 태그 있는
-                  영상 <b>{result.filter.returned}</b>개 (쇼핑 태그 없어서 스킵{" "}
-                  {result.filter.noShoppingSkipped ?? 0}개)
-                </div>
-              )}
-            </div>
-          </section>
+      {/* Section 2: 라이브러리 */}
+      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <h2 className="font-semibold">
+            📚 썰 라이브러리
+            {library && (
+              <span className="ml-2 text-sm text-zinc-500">
+                (전체 {library.counts.all}개)
+              </span>
+            )}
+          </h2>
+        </div>
 
-          <section className="space-y-4">
-            {result.videos.map((v) => (
+        {/* 상태 탭 */}
+        <div className="flex flex-wrap gap-2 mb-3 text-sm">
+          {(
+            [
+              ["all", "전체"],
+              ["idea", STATUS_LABELS.idea],
+              ["producing", STATUS_LABELS.producing],
+              ["done", STATUS_LABELS.done],
+              ["skipped", STATUS_LABELS.skipped],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFilterStatus(key)}
+              className={`px-3 py-1.5 rounded-lg ${
+                filterStatus === key
+                  ? "bg-red-500 text-white"
+                  : "bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+              }`}
+            >
+              {label}{" "}
+              {library &&
+                `(${
+                  key === "all"
+                    ? library.counts.all
+                    : library.counts[
+                        key as Exclude<keyof typeof library.counts, "all">
+                      ]
+                })`}
+            </button>
+          ))}
+        </div>
+
+        {/* 필터 */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          <select
+            value={filterCategory}
+            onChange={(e) => setFilterCategory(e.target.value)}
+            className="border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-1.5 text-sm"
+          >
+            {CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="제품명/앵글 검색..."
+            className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-1.5 text-sm"
+          />
+          <button
+            type="button"
+            onClick={loadLibrary}
+            className="text-sm text-zinc-500 hover:underline px-2"
+          >
+            🔄 새로고침
+          </button>
+        </div>
+
+        {libLoading ? (
+          <div className="text-sm text-zinc-500 py-6 text-center">
+            로딩 중...
+          </div>
+        ) : library && library.items.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {library.items.map((a) => (
               <div
-                key={v.videoId}
-                className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4"
+                key={a.id}
+                className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-3 bg-white dark:bg-zinc-900"
               >
-                <div className="flex gap-3 mb-3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={v.thumbnail}
-                    alt={v.title}
-                    className="w-24 aspect-[9/16] object-cover rounded bg-zinc-100 dark:bg-zinc-800 shrink-0"
-                  />
+                <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <a
-                      href={`https://www.youtube.com/watch?v=${v.videoId}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm font-semibold hover:underline line-clamp-2"
-                    >
-                      {v.title}
-                    </a>
-                    <div className="text-xs text-zinc-500 mt-1">
-                      <span className="font-medium text-zinc-600 dark:text-zinc-400">
-                        {v.channelTitle}
-                      </span>
-                      {" · "}
-                      {v.views.toLocaleString()} 조회 · {v.publishedAt}
+                    <div className="text-sm font-semibold leading-snug line-clamp-2">
+                      {a.angle}
                     </div>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                      <span className="inline-block bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs px-2 py-0.5 rounded">
-                        🛍️ 태그 {v.shoppingProducts.length}개
+                    <div className="text-xs text-zinc-500 mt-1 flex flex-wrap gap-1">
+                      <span className="bg-zinc-100 dark:bg-zinc-800 rounded px-1.5 py-0.5">
+                        {a.product_category || "기타"}
                       </span>
-                      {v.viewRatio !== null && (
-                        <span
-                          className={`inline-block text-xs px-2 py-0.5 rounded font-medium ${
-                            v.viewRatio >= 3
-                              ? "bg-red-500 text-white"
-                              : v.viewRatio >= 1.5
-                                ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300"
-                                : v.viewRatio >= 1
-                                  ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
-                                  : "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
-                          }`}
-                          title={`채널 쇼츠 중앙값 ${v.channelMedian?.toLocaleString()} 대비`}
-                        >
-                          {v.viewRatio >= 3
-                            ? "🔥 "
-                            : v.viewRatio >= 1.5
-                              ? "📈 "
-                              : v.viewRatio < 1
-                                ? "📉 "
-                                : ""}
-                          채널 평균 대비 {v.viewRatio.toFixed(1)}x
-                        </span>
-                      )}
+                      <span className="text-zinc-700 dark:text-zinc-300 font-medium">
+                        {a.product_name}
+                      </span>
                     </div>
+                    {a.hook && (
+                      <div className="mt-1.5 text-xs text-zinc-600 dark:text-zinc-400 italic">
+                        &ldquo;{a.hook}&rdquo;
+                      </div>
+                    )}
+                    {a.fact && (
+                      <div className="mt-1 text-xs text-zinc-500 line-clamp-2">
+                        {a.fact}
+                      </div>
+                    )}
+                    {a.sources && a.sources.length > 0 && (
+                      <details className="mt-1 text-xs">
+                        <summary className="cursor-pointer text-zinc-400">
+                          🔗 출처 {a.sources.length}개
+                        </summary>
+                        <ul className="mt-1 ml-3 list-disc space-y-0.5">
+                          {a.sources.map((u) => (
+                            <li key={u}>
+                              <a
+                                href={u}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-blue-500 hover:underline break-all"
+                              >
+                                {u}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {v.shoppingProducts.map((p, i) => (
-                    <div
-                      key={`${v.videoId}-${i}`}
-                      className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-1.5 flex gap-2"
-                    >
-                      {p.thumbnailUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={p.thumbnailUrl}
-                          alt={p.title}
-                          className="w-14 h-14 object-cover rounded bg-zinc-50 dark:bg-zinc-800 shrink-0"
-                        />
-                      ) : (
-                        <div className="w-14 h-14 bg-zinc-100 dark:bg-zinc-800 rounded flex items-center justify-center text-zinc-400 text-[10px] shrink-0">
-                          이미지
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0 flex flex-col justify-between">
-                        <div>
-                          <div className="text-[11px] leading-tight line-clamp-2">
-                            {p.title}
-                          </div>
-                          {p.merchantName && (
-                            <div className="text-[10px] text-zinc-500 line-clamp-1 mt-0.5">
-                              {p.merchantName}
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex items-center justify-between gap-1 mt-1">
-                          {p.price ? (
-                            <div className="text-xs font-bold truncate">
-                              {p.price}
-                            </div>
-                          ) : (
-                            <div />
-                          )}
-                          <div className="flex gap-0.5 shrink-0">
-                            {p.buyUrl && (
-                              <a
-                                href={p.buyUrl}
-                                target="_blank"
-                                rel="noreferrer sponsored"
-                                className="text-[10px] px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded"
-                              >
-                                구매
-                              </a>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => useThisProduct(p.title)}
-                              className="text-[10px] px-1.5 py-0.5 bg-red-500 hover:bg-red-600 text-white rounded"
-                            >
-                              선택
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1">
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded ${
+                      a.status === "done"
+                        ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
+                        : a.status === "producing"
+                          ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300"
+                          : a.status === "skipped"
+                            ? "bg-zinc-200 dark:bg-zinc-700 text-zinc-500"
+                            : "bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300"
+                    }`}
+                  >
+                    {STATUS_LABELS[a.status]}
+                  </span>
 
-                {(v.shoppingUrls.length > 0 ||
-                  v.descriptionPreview ||
-                  v.topComments.length > 0) && (
-                  <details className="mt-3 text-xs">
-                    <summary className="cursor-pointer text-zinc-500">
-                      📝 영상 설명 · 고정 댓글 · 링크 보기
-                    </summary>
-                    <div className="mt-2 space-y-2 border-l-2 border-zinc-200 dark:border-zinc-800 pl-3">
-                      {v.descriptionPreview && (
-                        <div>
-                          <div className="font-medium text-zinc-500">설명</div>
-                          <div className="whitespace-pre-wrap text-zinc-600 dark:text-zinc-400">
-                            {v.descriptionPreview}
-                          </div>
-                        </div>
-                      )}
-                      {v.topComments.length > 0 && (
-                        <div>
-                          <div className="font-medium text-zinc-500">
-                            상단 댓글
-                          </div>
-                          <ul className="space-y-1 text-zinc-600 dark:text-zinc-400">
-                            {v.topComments.map((c, i) => (
-                              <li key={i} className="whitespace-pre-wrap">
-                                {c}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      {v.shoppingUrls.length > 0 && (
-                        <div>
-                          <div className="font-medium text-zinc-500">
-                            발견된 쇼핑 링크
-                          </div>
-                          <ul className="space-y-0.5">
-                            {v.shoppingUrls.map((u) => (
-                              <li key={u}>
-                                <a
-                                  href={u}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-blue-500 hover:underline break-all"
-                                >
-                                  {u}
-                                </a>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  </details>
-                )}
+                  <div className="ml-auto flex gap-1">
+                    {a.status !== "done" && (
+                      <button
+                        type="button"
+                        onClick={() => useThisAngle(a)}
+                        className="text-xs px-2 py-1 bg-red-500 hover:bg-red-600 text-white rounded"
+                      >
+                        🎬 쇼츠 만들기
+                      </button>
+                    )}
+                    <select
+                      value={a.status}
+                      onChange={(e) =>
+                        handleStatusChange(
+                          a.id,
+                          e.target.value as StoryAngle["status"],
+                        )
+                      }
+                      className="text-xs px-1.5 py-1 border border-zinc-200 dark:border-zinc-700 rounded bg-white dark:bg-zinc-950"
+                    >
+                      <option value="idea">아이디어</option>
+                      <option value="producing">제작 중</option>
+                      <option value="done">완료</option>
+                      <option value="skipped">스킵</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(a.id)}
+                      className="text-xs px-1.5 py-1 text-zinc-400 hover:text-red-500"
+                      title="삭제"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                </div>
               </div>
             ))}
-          </section>
-        </>
-      )}
+          </div>
+        ) : (
+          <div className="text-sm text-zinc-500 py-8 text-center">
+            라이브러리가 비어있습니다. 위에서 &ldquo;✨ 썰 발굴&rdquo; 눌러서 시작하세요.
+          </div>
+        )}
+
+        {library && library.total > library.items.length && (
+          <div className="mt-3 text-xs text-zinc-500 text-center">
+            {library.items.length}/{library.total}개 표시 (필터 조건에
+            맞는 결과)
+          </div>
+        )}
+      </section>
 
       <div className="flex justify-between">
         <span />
