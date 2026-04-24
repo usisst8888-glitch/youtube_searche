@@ -109,7 +109,9 @@ async function pMapLimit<T, R>(
 
 async function searchYoutubeShorts(
   query: string,
-  limit = 6,
+  limit = 2,
+  region = "US",
+  lang = "en",
 ): Promise<SceneAsset[]> {
   const key = process.env.YOUTUBE_API_KEY;
   if (!key) return [];
@@ -117,7 +119,7 @@ async function searchYoutubeShorts(
     const published = new Date(
       Date.now() - 365 * 24 * 60 * 60 * 1000,
     ).toISOString();
-    let searched = await searchShorts(key, query, 20, "KR", "ko", published);
+    let searched = await searchShorts(key, query, 20, region, lang, published);
     if (searched.length === 0) return [];
     const stats = await getVideoStats(
       key,
@@ -146,16 +148,16 @@ async function searchYoutubeShorts(
 
 async function findWebImages(
   query: string,
-  limit = 6,
+  limit = 3,
 ): Promise<SceneAsset[]> {
   try {
     const ai = getGeminiClient();
-    const prompt = `아래 키워드 관련 한국 쇼핑/제품 페이지 URL 10개를 한 줄씩 알려주세요.
-우선순위: 쿠팡, 스마트스토어, 네이버 쇼핑, 11번가, 지마켓, 공식 브랜드몰.
+    const prompt = `Find 10 product page URLs (from US shopping/brand sites) related to this keyword.
+Priority: Amazon, Walmart, Target, Best Buy, eBay, official brand sites, Etsy. Each page must have a real product image.
 
-키워드: "${query}"
+Keyword: "${query}"
 
-URL만 한 줄씩 나열. 다른 설명 불필요.`;
+Return ONLY URLs, one per line. No other text.`;
     const response = await withRetry(() =>
       ai.models.generateContent({
         model: FLASH_MODEL,
@@ -216,13 +218,14 @@ URL만 한 줄씩 나열. 다른 설명 불필요.`;
 
 async function searchTiktok(
   query: string,
-  limit = 6,
+  limit = 2,
+  lang = "en",
 ): Promise<SceneAsset[]> {
   // TikTok은 anti-bot이 강해서 불안정. 시도는 하되 실패해도 조용히 빈 배열.
   try {
     const url = `https://www.tiktok.com/search/video?q=${encodeURIComponent(
       query,
-    )}&lang=ko-KR`;
+    )}&lang=${lang}`;
     const res = await fetch(url, {
       headers: {
         "User-Agent": UA,
@@ -295,8 +298,11 @@ export async function POST(req: NextRequest) {
       sceneText,
       productName,
       emotion,
-      sources = ["youtube", "web-image", "tiktok"],
-      limitPerSource = 5,
+      region = "US",
+      lang = "en",
+      ytLimit = 2,
+      imgLimit = 3,
+      tiktokLimit = 2,
     } = await req.json();
 
     if (!sceneText || typeof sceneText !== "string") {
@@ -306,20 +312,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 검색 쿼리: 씬 텍스트에서 핵심 명사 + 상품명
-    const query = [productName, sceneText].filter(Boolean).join(" ").slice(0, 80);
+    // 검색 쿼리: 씬 텍스트 + 상품명
+    const query = [productName, sceneText]
+      .filter(Boolean)
+      .join(" ")
+      .slice(0, 80);
     const productQuery = productName || query;
 
-    const tasks: Promise<SceneAsset[]>[] = [];
-    if (sources.includes("youtube"))
-      tasks.push(searchYoutubeShorts(query, limitPerSource));
-    if (sources.includes("web-image"))
-      tasks.push(findWebImages(productQuery, limitPerSource));
-    if (sources.includes("tiktok"))
-      tasks.push(searchTiktok(query, limitPerSource));
+    const [youtube, images, tiktok] = await Promise.all([
+      ytLimit > 0
+        ? searchYoutubeShorts(query, ytLimit, region, lang)
+        : Promise.resolve([] as SceneAsset[]),
+      imgLimit > 0
+        ? findWebImages(productQuery, imgLimit)
+        : Promise.resolve([] as SceneAsset[]),
+      tiktokLimit > 0
+        ? searchTiktok(query, tiktokLimit, lang)
+        : Promise.resolve([] as SceneAsset[]),
+    ]);
 
-    const grouped = await Promise.all(tasks);
-    const flat: SceneAsset[] = grouped.flat();
+    const flat: SceneAsset[] = [...youtube, ...tiktok, ...images];
 
     return NextResponse.json({
       sceneText,
@@ -327,9 +339,9 @@ export async function POST(req: NextRequest) {
       query,
       assets: flat,
       countsBySource: {
-        youtube: grouped[0]?.length || 0,
-        "web-image": grouped[1]?.length || 0,
-        tiktok: grouped[2]?.length || 0,
+        youtube: youtube.length,
+        "web-image": images.length,
+        tiktok: tiktok.length,
       },
     });
   } catch (e) {

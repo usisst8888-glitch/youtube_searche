@@ -120,13 +120,13 @@ type ProjectState = {
         ) => Record<number, WebSceneAsset[]>),
   ) => void;
 
-  selectedSceneAsset: Record<number, WebSceneAsset>;
-  setSelectedSceneAsset: (
+  selectedSceneAssets: Record<number, WebSceneAsset[]>;
+  setSelectedSceneAssets: (
     v:
-      | Record<number, WebSceneAsset>
+      | Record<number, WebSceneAsset[]>
       | ((
-          prev: Record<number, WebSceneAsset>,
-        ) => Record<number, WebSceneAsset>),
+          prev: Record<number, WebSceneAsset[]>,
+        ) => Record<number, WebSceneAsset[]>),
   ) => void;
 
   ttsAudioUrl: string | null;
@@ -158,8 +158,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [fetchedSceneAssets, setFetchedSceneAssets] = useState<
     Record<number, WebSceneAsset[]>
   >({});
-  const [selectedSceneAsset, setSelectedSceneAsset] = useState<
-    Record<number, WebSceneAsset>
+  const [selectedSceneAssets, setSelectedSceneAssets] = useState<
+    Record<number, WebSceneAsset[]>
   >({});
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
   const [bgmAudioUrl, setBgmAudioUrl] = useState<string | null>(null);
@@ -192,8 +192,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         setSceneAssets,
         fetchedSceneAssets,
         setFetchedSceneAssets,
-        selectedSceneAsset,
-        setSelectedSceneAsset,
+        selectedSceneAssets,
+        setSelectedSceneAssets,
         ttsAudioUrl,
         setTtsAudioUrl,
         bgmAudioUrl,

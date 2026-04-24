@@ -19,8 +19,8 @@ export default function AnalyzePage() {
     setAnalysis,
     fetchedSceneAssets,
     setFetchedSceneAssets,
-    selectedSceneAsset,
-    setSelectedSceneAsset,
+    selectedSceneAssets,
+    setSelectedSceneAssets,
     storyAngleData,
   } = useProject();
 
@@ -56,7 +56,7 @@ export default function AnalyzePage() {
       setStoryPremise(data.storyPremise || "");
       setAnalysis(null);
       setFetchedSceneAssets({});
-      setSelectedSceneAsset({});
+      setSelectedSceneAssets({});
       setActiveSceneIndex(0);
     } catch (e) {
       setError(e instanceof Error ? e.message : "오류");
@@ -78,8 +78,11 @@ export default function AnalyzePage() {
           sceneText: scene.text,
           emotion: scene.emotion,
           productName,
-          sources: ["youtube", "web-image", "tiktok"],
-          limitPerSource: 5,
+          region: "US",
+          lang: "en",
+          ytLimit: 2,
+          imgLimit: 3,
+          tiktokLimit: 2,
         }),
       });
       const data = await res.json();
@@ -95,12 +98,36 @@ export default function AnalyzePage() {
     }
   };
 
-  const selectAsset = (sceneIndex: number, asset: WebSceneAsset) => {
-    setSelectedSceneAsset((prev) => ({ ...prev, [sceneIndex]: asset }));
+  const assetKey = (a: WebSceneAsset): string => {
+    if (a.kind === "youtube-short") return `yt:${a.videoId}`;
+    if (a.kind === "web-image") return `img:${a.imageUrl}`;
+    return `tt:${a.videoId}`;
   };
 
-  const deselectAsset = (sceneIndex: number) => {
-    setSelectedSceneAsset((prev) => {
+  const isAssetSelected = (
+    sceneIndex: number,
+    asset: WebSceneAsset,
+  ): boolean => {
+    const list = selectedSceneAssets[sceneIndex] || [];
+    const k = assetKey(asset);
+    return list.some((a) => assetKey(a) === k);
+  };
+
+  const toggleAsset = (sceneIndex: number, asset: WebSceneAsset) => {
+    setSelectedSceneAssets((prev) => {
+      const list = prev[sceneIndex] || [];
+      const k = assetKey(asset);
+      const existing = list.findIndex((a) => assetKey(a) === k);
+      const next =
+        existing >= 0
+          ? list.filter((_, i) => i !== existing)
+          : [...list, asset];
+      return { ...prev, [sceneIndex]: next };
+    });
+  };
+
+  const clearAssets = (sceneIndex: number) => {
+    setSelectedSceneAssets((prev) => {
       const next = { ...prev };
       delete next[sceneIndex];
       return next;
@@ -225,7 +252,7 @@ export default function AnalyzePage() {
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 space-y-2">
             <h3 className="font-semibold mb-2">🎬 씬별 대본</h3>
             {generatedScenes.map((s) => {
-              const selected = selectedSceneAsset[s.index];
+              const selectedList = selectedSceneAssets[s.index] || [];
               const isActive = activeSceneIndex === s.index;
               return (
                 <button
@@ -246,9 +273,9 @@ export default function AnalyzePage() {
                       <span className="text-zinc-400">·</span>
                       <span className="text-red-500">{s.emotion}</span>
                     </div>
-                    {selected ? (
+                    {selectedList.length > 0 ? (
                       <span className="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded">
-                        ✅ 소재 선택됨
+                        ✅ 소재 {selectedList.length}개 선택
                       </span>
                     ) : (
                       <span className="text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 px-2 py-0.5 rounded">
@@ -257,17 +284,25 @@ export default function AnalyzePage() {
                     )}
                   </div>
                   <p className="text-sm leading-snug">{s.text}</p>
-                  {selected && (
-                    <div className="mt-2 flex gap-2 items-center">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={assetThumb(selected)}
-                        alt=""
-                        className="w-12 h-12 object-cover rounded bg-zinc-100 dark:bg-zinc-800"
-                      />
-                      <div className="text-xs text-zinc-500 truncate flex-1">
-                        {assetLabel(selected)} · {assetSource(selected)}
-                      </div>
+                  {selectedList.length > 0 && (
+                    <div className="mt-2 flex gap-1 overflow-x-auto">
+                      {selectedList.map((sel, i) => (
+                        <div
+                          key={`${assetKey(sel)}-${i}`}
+                          className="relative shrink-0"
+                          title={assetLabel(sel)}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={assetThumb(sel)}
+                            alt=""
+                            className="w-10 h-10 object-cover rounded bg-zinc-100 dark:bg-zinc-800"
+                          />
+                          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] rounded-full w-3.5 h-3.5 flex items-center justify-center">
+                            {i + 1}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </button>
@@ -285,12 +320,14 @@ export default function AnalyzePage() {
               (() => {
                 const scene = generatedScenes[activeSceneIndex];
                 const assets = fetchedSceneAssets[activeSceneIndex] || [];
-                const selected = selectedSceneAsset[activeSceneIndex];
+                const selectedList =
+                  selectedSceneAssets[activeSceneIndex] || [];
                 return (
                   <div>
                     <div className="flex items-center justify-between mb-3">
                       <h3 className="font-semibold text-sm">
-                        씬 {activeSceneIndex + 1} 소재 선택
+                        씬 {activeSceneIndex + 1} 소재 ({selectedList.length}{" "}
+                        선택됨)
                       </h3>
                       <div className="flex gap-1">
                         <button
@@ -305,19 +342,23 @@ export default function AnalyzePage() {
                               ? "🔍 소재 찾기"
                               : "🔄 다시 찾기"}
                         </button>
-                        {selected && (
+                        {selectedList.length > 0 && (
                           <button
                             type="button"
-                            onClick={() => deselectAsset(activeSceneIndex)}
+                            onClick={() => clearAssets(activeSceneIndex)}
                             className="text-xs bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 px-2 py-1.5 rounded-lg"
                           >
-                            선택 해제
+                            전부 해제
                           </button>
                         )}
                       </div>
                     </div>
                     <p className="text-xs text-zinc-600 dark:text-zinc-400 mb-3 italic">
                       &ldquo;{scene?.text}&rdquo;
+                    </p>
+                    <p className="text-xs text-zinc-500 mb-3">
+                      🇺🇸 미국 기반 소스 · 영상 2개 (YouTube) + 이미지 3개
+                      (쇼핑페이지) + TikTok 2개 (가능 시) · 여러 개 선택 가능
                     </p>
 
                     {assets.length === 0 ? (
@@ -330,13 +371,22 @@ export default function AnalyzePage() {
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                         {assets.map((a, idx) => {
                           const thumb = assetThumb(a);
-                          const isSelected =
-                            selected && JSON.stringify(selected) === JSON.stringify(a);
+                          const isSelected = isAssetSelected(
+                            activeSceneIndex,
+                            a,
+                          );
+                          const selectionOrder = isSelected
+                            ? selectedList.findIndex(
+                                (sel) => assetKey(sel) === assetKey(a),
+                              ) + 1
+                            : 0;
                           return (
                             <button
                               key={`${a.kind}-${idx}`}
                               type="button"
-                              onClick={() => selectAsset(activeSceneIndex, a)}
+                              onClick={() =>
+                                toggleAsset(activeSceneIndex, a)
+                              }
                               className={`relative text-left border rounded-lg overflow-hidden hover:border-red-400 ${
                                 isSelected
                                   ? "border-red-500 ring-2 ring-red-500"
@@ -353,8 +403,8 @@ export default function AnalyzePage() {
                                 {assetLabel(a)}
                               </div>
                               {isSelected && (
-                                <div className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">
-                                  ✓
+                                <div className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold">
+                                  {selectionOrder}
                                 </div>
                               )}
                               <div className="p-1.5">
