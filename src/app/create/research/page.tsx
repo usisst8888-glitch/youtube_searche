@@ -51,7 +51,7 @@ export default function CreateResearchPage() {
 
   // 발굴 폼
   const [category, setCategory] = useState("전체");
-  const [count, setCount] = useState(20);
+  const [count, setCount] = useState(3);
   const [discovering, setDiscovering] = useState(false);
   const [discoverStatus, setDiscoverStatus] = useState("");
 
@@ -176,7 +176,7 @@ export default function CreateResearchPage() {
             onChange={(e) => setCount(parseInt(e.target.value, 10))}
             className="border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
           >
-            {[5, 10, 20, 30, 50].map((n) => (
+            {[1, 2, 3, 4, 5].map((n) => (
               <option key={n} value={n}>
                 {n}개씩
               </option>
