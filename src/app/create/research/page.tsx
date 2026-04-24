@@ -285,112 +285,143 @@ export default function CreateResearchPage() {
             로딩 중...
           </div>
         ) : library && library.items.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {library.items.map((a) => (
-              <div
-                key={a.id}
-                className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-3 bg-white dark:bg-zinc-900"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold leading-snug line-clamp-2">
-                      {a.angle}
-                    </div>
-                    <div className="text-xs text-zinc-500 mt-1 flex flex-wrap gap-1">
-                      <span className="bg-zinc-100 dark:bg-zinc-800 rounded px-1.5 py-0.5">
-                        {a.product_category || "기타"}
+          (() => {
+            // 카테고리별 그룹화
+            const groups: Record<string, StoryAngle[]> = {};
+            for (const a of library.items) {
+              const cat = a.product_category || "기타";
+              if (!groups[cat]) groups[cat] = [];
+              groups[cat].push(a);
+            }
+            // 카테고리 정렬: 기본 순서에 없으면 끝으로
+            const order = CATEGORIES.filter((c) => c !== "전체");
+            const sortedCats = Object.keys(groups).sort((a, b) => {
+              const ia = order.indexOf(a);
+              const ib = order.indexOf(b);
+              const va = ia === -1 ? 999 : ia;
+              const vb = ib === -1 ? 999 : ib;
+              return va - vb || a.localeCompare(b);
+            });
+            return (
+              <div className="space-y-6">
+                {sortedCats.map((cat) => (
+                  <div key={cat}>
+                    <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                      <span>{cat}</span>
+                      <span className="text-xs font-normal text-zinc-500">
+                        {groups[cat].length}개
                       </span>
-                      <span className="text-zinc-700 dark:text-zinc-300 font-medium">
-                        {a.product_name}
-                      </span>
-                    </div>
-                    {a.hook && (
-                      <div className="mt-1.5 text-xs text-zinc-600 dark:text-zinc-400 italic">
-                        &ldquo;{a.hook}&rdquo;
-                      </div>
-                    )}
-                    {a.fact && (
-                      <div className="mt-1 text-xs text-zinc-500 line-clamp-2">
-                        {a.fact}
-                      </div>
-                    )}
-                    {a.sources && a.sources.length > 0 && (
-                      <details className="mt-1 text-xs">
-                        <summary className="cursor-pointer text-zinc-400">
-                          🔗 출처 {a.sources.length}개
-                        </summary>
-                        <ul className="mt-1 ml-3 list-disc space-y-0.5">
-                          {a.sources.map((u) => (
-                            <li key={u}>
-                              <a
-                                href={u}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-blue-500 hover:underline break-all"
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {groups[cat].map((a) => (
+                        <div
+                          key={a.id}
+                          className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-3 bg-white dark:bg-zinc-900"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-semibold leading-snug line-clamp-2">
+                                {a.angle}
+                              </div>
+                              <div className="text-xs text-zinc-500 mt-1">
+                                <span className="text-zinc-700 dark:text-zinc-300 font-medium">
+                                  {a.product_name}
+                                </span>
+                              </div>
+                              {a.hook && (
+                                <div className="mt-1.5 text-xs text-zinc-600 dark:text-zinc-400 italic">
+                                  &ldquo;{a.hook}&rdquo;
+                                </div>
+                              )}
+                              {a.fact && (
+                                <div className="mt-1 text-xs text-zinc-500 line-clamp-2">
+                                  {a.fact}
+                                </div>
+                              )}
+                              {a.sources && a.sources.length > 0 && (
+                                <details className="mt-1 text-xs">
+                                  <summary className="cursor-pointer text-zinc-400">
+                                    🔗 출처 {Array.from(new Set(a.sources)).length}개
+                                  </summary>
+                                  <ul className="mt-1 ml-3 list-disc space-y-0.5">
+                                    {Array.from(new Set(a.sources)).map(
+                                      (u, i) => (
+                                        <li key={`${a.id}-src-${i}`}>
+                                          <a
+                                            href={u}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-blue-500 hover:underline break-all"
+                                          >
+                                            {u}
+                                          </a>
+                                        </li>
+                                      ),
+                                    )}
+                                  </ul>
+                                </details>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="mt-2 flex flex-wrap items-center gap-1">
+                            <span
+                              className={`text-[10px] px-2 py-0.5 rounded ${
+                                a.status === "done"
+                                  ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
+                                  : a.status === "producing"
+                                    ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300"
+                                    : a.status === "skipped"
+                                      ? "bg-zinc-200 dark:bg-zinc-700 text-zinc-500"
+                                      : "bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300"
+                              }`}
+                            >
+                              {STATUS_LABELS[a.status]}
+                            </span>
+
+                            <div className="ml-auto flex gap-1">
+                              {a.status !== "done" && (
+                                <button
+                                  type="button"
+                                  onClick={() => useThisAngle(a)}
+                                  className="text-xs px-2 py-1 bg-red-500 hover:bg-red-600 text-white rounded"
+                                >
+                                  🎬 쇼츠 만들기
+                                </button>
+                              )}
+                              <select
+                                value={a.status}
+                                onChange={(e) =>
+                                  handleStatusChange(
+                                    a.id,
+                                    e.target.value as StoryAngle["status"],
+                                  )
+                                }
+                                className="text-xs px-1.5 py-1 border border-zinc-200 dark:border-zinc-700 rounded bg-white dark:bg-zinc-950"
                               >
-                                {u}
-                              </a>
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    )}
+                                <option value="idea">아이디어</option>
+                                <option value="producing">제작 중</option>
+                                <option value="done">완료</option>
+                                <option value="skipped">스킵</option>
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(a.id)}
+                                className="text-xs px-1.5 py-1 text-zinc-400 hover:text-red-500"
+                                title="삭제"
+                              >
+                                🗑️
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-
-                <div className="mt-2 flex flex-wrap items-center gap-1">
-                  <span
-                    className={`text-[10px] px-2 py-0.5 rounded ${
-                      a.status === "done"
-                        ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
-                        : a.status === "producing"
-                          ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300"
-                          : a.status === "skipped"
-                            ? "bg-zinc-200 dark:bg-zinc-700 text-zinc-500"
-                            : "bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300"
-                    }`}
-                  >
-                    {STATUS_LABELS[a.status]}
-                  </span>
-
-                  <div className="ml-auto flex gap-1">
-                    {a.status !== "done" && (
-                      <button
-                        type="button"
-                        onClick={() => useThisAngle(a)}
-                        className="text-xs px-2 py-1 bg-red-500 hover:bg-red-600 text-white rounded"
-                      >
-                        🎬 쇼츠 만들기
-                      </button>
-                    )}
-                    <select
-                      value={a.status}
-                      onChange={(e) =>
-                        handleStatusChange(
-                          a.id,
-                          e.target.value as StoryAngle["status"],
-                        )
-                      }
-                      className="text-xs px-1.5 py-1 border border-zinc-200 dark:border-zinc-700 rounded bg-white dark:bg-zinc-950"
-                    >
-                      <option value="idea">아이디어</option>
-                      <option value="producing">제작 중</option>
-                      <option value="done">완료</option>
-                      <option value="skipped">스킵</option>
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(a.id)}
-                      className="text-xs px-1.5 py-1 text-zinc-400 hover:text-red-500"
-                      title="삭제"
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                </div>
+                ))}
               </div>
-            ))}
-          </div>
+            );
+          })()
         ) : (
           <div className="text-sm text-zinc-500 py-8 text-center">
             라이브러리가 비어있습니다. 위에서 &ldquo;✨ 썰 발굴&rdquo; 눌러서 시작하세요.
