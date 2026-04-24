@@ -10,12 +10,6 @@ type Subcategory = {
   description: string;
 };
 
-type SuggestedTopic = {
-  title: string;
-  format: string;
-  hook: string;
-};
-
 type ShoppingProduct = {
   title: string;
   thumbnailUrl: string;
@@ -60,15 +54,12 @@ export default function CreateResearchPage() {
   const router = useRouter();
   const { setProductName, setStoryTopic } = useProject();
 
+  // Section ⓪: 대주제 → 소주제
   const [bigTopic, setBigTopic] = useState("");
   const [subFetching, setSubFetching] = useState(false);
   const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
 
-  const [topicKeyword, setTopicKeyword] = useState("");
-  const [suggesting, setSuggesting] = useState(false);
-  const [suggestedTopics, setSuggestedTopics] = useState<SuggestedTopic[]>([]);
-  const [referenceTitles, setReferenceTitles] = useState<string[]>([]);
-
+  // Section ①: 주제로 제품 찾기
   const [topic, setTopic] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ApiResponse | null>(null);
@@ -98,34 +89,10 @@ export default function CreateResearchPage() {
     }
   };
 
-  const handleSuggestTopics = async () => {
-    setError("");
-    if (!topicKeyword.trim()) {
-      setError("키워드를 입력하세요.");
-      return;
-    }
-    setSuggesting(true);
-    try {
-      const res = await fetch("/api/suggest-topics", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keyword: topicKeyword, productName: "" }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "주제 생성 실패");
-      setSuggestedTopics(data.topics || []);
-      setReferenceTitles(data.referenceTitles || []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "오류");
-    } finally {
-      setSuggesting(false);
-    }
-  };
-
   const handleResearch = async () => {
     setError("");
     if (!topic.trim()) {
-      setError("주제를 입력하세요.");
+      setError("주제/키워드를 입력하세요.");
       return;
     }
     setLoading(true);
@@ -136,7 +103,7 @@ export default function CreateResearchPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           topic,
-          searchKeyword: topicKeyword.trim() || topic,
+          searchKeyword: topic,
           maxVideos: 15,
         }),
       });
@@ -151,9 +118,7 @@ export default function CreateResearchPage() {
   };
 
   const useSubcategory = (keyword: string) => {
-    setTopicKeyword(keyword);
-    setSuggestedTopics([]);
-    setReferenceTitles([]);
+    setTopic(keyword);
   };
 
   const useThisProduct = (productName: string) => {
@@ -164,11 +129,12 @@ export default function CreateResearchPage() {
 
   return (
     <div className="space-y-6">
-      {/* Section 0: 대주제 → 소주제 */}
+      {/* Section ⓪: 대주제 → 소주제 */}
       <section className="bg-sky-50 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-900/40 rounded-xl p-6">
         <h2 className="font-semibold mb-1">⓪ 대주제 → 소주제 (선택)</h2>
         <p className="text-xs text-zinc-500 mb-4">
-          큰 카테고리를 입력하면 쇼츠에 쓸 만한 세부 키워드 12개가 나옵니다.
+          큰 카테고리를 입력하면 쇼츠 검색에 쓸 만한 세부 키워드 12개가 나옵니다.
+          키워드 클릭 시 아래 ① 섹션의 주제 필드에 자동 입력.
         </p>
         <div className="flex gap-2">
           <input
@@ -199,7 +165,7 @@ export default function CreateResearchPage() {
                 type="button"
                 onClick={() => useSubcategory(s.keyword)}
                 className={`text-left border rounded-lg p-2 transition-colors ${
-                  topicKeyword === s.keyword
+                  topic === s.keyword
                     ? "border-red-500 bg-red-50 dark:bg-red-950/30"
                     : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-sky-400"
                 }`}
@@ -214,79 +180,15 @@ export default function CreateResearchPage() {
         )}
       </section>
 
-      {/* Section 1: 주제 추천받기 */}
-      <section className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl p-6">
-        <h2 className="font-semibold mb-1">① 주제 아이디어 찾기 (선택)</h2>
-        <p className="text-xs text-zinc-500 mb-4">
-          키워드로 YouTube 트렌드 분석 → 주제 10개 추천.
-        </p>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={topicKeyword}
-            onChange={(e) => setTopicKeyword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !suggesting) handleSuggestTopics();
-            }}
-            placeholder="예: 꿀템 / 필수템 / 캠핑"
-            className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
-          />
-          <button
-            type="button"
-            onClick={handleSuggestTopics}
-            disabled={suggesting}
-            className="bg-amber-600 hover:bg-amber-700 disabled:bg-zinc-400 text-white text-sm font-medium px-4 py-2 rounded-lg whitespace-nowrap"
-          >
-            {suggesting ? "분석 중..." : "주제 추천받기"}
-          </button>
-        </div>
-        {suggestedTopics.length > 0 && (
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
-            {suggestedTopics.map((t, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => setTopic(t.title)}
-                className={`text-left border rounded-lg p-2.5 transition-colors ${
-                  topic === t.title
-                    ? "border-red-500 bg-red-50 dark:bg-red-950/30"
-                    : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-zinc-400"
-                }`}
-              >
-                <div className="text-sm font-medium">{t.title}</div>
-                <div className="text-xs text-zinc-500 mt-0.5">
-                  <span className="px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded mr-1">
-                    {t.format}
-                  </span>
-                  {t.hook}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-        {referenceTitles.length > 0 && (
-          <details className="mt-2 text-xs text-zinc-500">
-            <summary className="cursor-pointer">
-              🔎 참고한 트렌딩 쇼츠 제목 {referenceTitles.length}개
-            </summary>
-            <ul className="mt-1 ml-4 list-disc space-y-0.5">
-              {referenceTitles.map((t, i) => (
-                <li key={i}>{t}</li>
-              ))}
-            </ul>
-          </details>
-        )}
-      </section>
-
-      {/* Section 2: 주제로 제품 찾기 */}
+      {/* Section ①: 주제로 제품 찾기 */}
       <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-        <h2 className="font-semibold mb-1">② 주제로 제품 찾기</h2>
+        <h2 className="font-semibold mb-1">① 주제로 영상·제품 찾기</h2>
         <p className="text-xs text-zinc-500 mb-4">
           YouTube에서 주제 관련 쇼츠를 찾고,{" "}
           <b>&ldquo;제품 보기&rdquo; (YouTube Shopping) 태그가 있는 영상만</b>{" "}
           골라서 그 영상의 공식 태그 제품을 가져옵니다.
         </p>
-        <label className="block text-sm font-medium mb-2">주제 / 장면</label>
+        <label className="block text-sm font-medium mb-2">주제 / 키워드</label>
         <div className="flex gap-2">
           <input
             type="text"
@@ -295,7 +197,7 @@ export default function CreateResearchPage() {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !loading) handleResearch();
             }}
-            placeholder="예: 자취 1년차 vs 5년차 꿀템"
+            placeholder="예: 골프 연습도구 / 자취 꿀템 / 뷰티 필수템"
             className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2"
           />
           <button
@@ -306,18 +208,9 @@ export default function CreateResearchPage() {
             {loading ? "분석 중..." : "🔍 영상 찾기"}
           </button>
         </div>
-        {topicKeyword.trim() && (
-          <p className="mt-1 text-xs text-zinc-500">
-            YouTube 검색은{" "}
-            <code className="px-1 bg-zinc-100 dark:bg-zinc-800 rounded">
-              {topicKeyword}
-            </code>
-            로 진행됩니다.
-          </p>
-        )}
         {loading && (
           <p className="mt-2 text-xs text-zinc-500">
-            쇼츠 검색 → 제목 필터 → 각 영상 쇼핑 태그 확인, 약 30초~1분.
+            쇼츠 검색 → 각 영상 쇼핑 태그 확인 → 채널 평균 계산, 약 30초~1분.
           </p>
         )}
         {error && (
