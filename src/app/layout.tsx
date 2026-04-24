@@ -45,6 +45,12 @@ export default function RootLayout({
                 🔥 떡상 탐색
               </Link>
               <Link
+                href="/research"
+                className="px-3 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                🛒 제품 리서치
+              </Link>
+              <Link
                 href="/create"
                 className="px-3 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
               >
