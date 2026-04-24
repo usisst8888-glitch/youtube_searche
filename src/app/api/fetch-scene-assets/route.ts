@@ -353,6 +353,96 @@ async function searchTiktok(
   }
 }
 
+const QUERY_SCHEMA = {
+  type: "object",
+  properties: {
+    videoQueries: {
+      type: "array",
+      items: { type: "string" },
+    },
+    imageQueries: {
+      type: "array",
+      items: { type: "string" },
+    },
+  },
+  required: ["videoQueries", "imageQueries"],
+};
+
+async function extractSearchQueries(
+  sceneText: string,
+  productName: string,
+): Promise<{ videoQueries: string[]; imageQueries: string[] }> {
+  try {
+    const ai = getGeminiClient();
+    const prompt = `당신은 쇼츠 편집용 **영상·이미지 검색어 설계자**입니다.
+씬 대본이 화면에 나올 때 **시청자가 봐야 할 장면**을 찾기 위한 검색어를 뽑습니다.
+
+## 씬 대본 (이걸 그대로 검색하면 안 됨 — 구어체 대사라서)
+"${sceneText}"
+
+## 제품명
+"${productName}"
+
+## 과제
+
+### 1) videoQueries (YouTube 영상 검색용, 한국 외 국가 크리에이터 대상)
+- **2개 생성**: 한국어 1개 + **영어 1개**
+- 영어는 국제적으로 이 제품이 검색 가능한 형태로
+  (예: 홈런볼 → "Korean Homerun Ball cookie", "Korean snack home run ball")
+- 한국어는 제품이 해외 리뷰/ASMR 영상에서 다뤄질 때 뜰 만한 형태
+- 각 3~8단어
+- 대사 구어체 금지, **시각 주제** 중심
+
+### 2) imageQueries (구글 이미지 검색용, 전세계 OK)
+- **2~3개 한국어**
+- 다양한 앵글: 포장지 / 클로즈업 / 단면 / 사용 장면 / 광고 이미지 등
+- 각 4~10자, 제품명 포함
+
+## 예시
+
+대본: "바삭한 튀김과 부드러운 크림의 조합"
+제품: "홈런볼"
+→ videoQueries: ["홈런볼 단면 크림", "Korean Homerun Ball cream snack"]
+→ imageQueries: ["홈런볼 단면", "홈런볼 크림", "홈런볼 쪼갠 모습"]
+
+대본: "여러분 이 동그란 모양 그냥 만든 건 줄 알았어요?"
+제품: "홈런볼"
+→ videoQueries: ["홈런볼 해태 과자", "Korean Home Run Ball snack review"]
+→ imageQueries: ["홈런볼 해태", "홈런볼 클로즈업", "홈런볼 포장지"]
+
+JSON으로 반환.`;
+
+    const response = await withRetry(() =>
+      ai.models.generateContent({
+        model: FLASH_MODEL,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: QUERY_SCHEMA,
+        },
+      }),
+    );
+    const text = response.text;
+    if (!text) throw new Error("empty");
+    const parsed = JSON.parse(text);
+    const videoQueries = (parsed.videoQueries || [])
+      .filter((s: unknown): s is string => typeof s === "string" && !!s.trim())
+      .slice(0, 3);
+    const imageQueries = (parsed.imageQueries || [])
+      .filter((s: unknown): s is string => typeof s === "string" && !!s.trim())
+      .slice(0, 3);
+    return {
+      videoQueries: videoQueries.length > 0 ? videoQueries : [productName],
+      imageQueries: imageQueries.length > 0 ? imageQueries : [productName],
+    };
+  } catch {
+    return {
+      videoQueries: [productName || sceneText.slice(0, 20)],
+      imageQueries: [productName || sceneText.slice(0, 20)],
+    };
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const {
@@ -373,31 +463,83 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 검색 쿼리: 씬 텍스트 + 상품명
-    const query = [productName, sceneText]
-      .filter(Boolean)
-      .join(" ")
-      .slice(0, 80);
-    const productQuery = productName || query;
+    // 1) LLM으로 시각적 검색어 추출 (영상용 복수, 이미지용 복수)
+    const { videoQueries, imageQueries } = await extractSearchQueries(
+      sceneText,
+      productName || "",
+    );
 
-    const [youtube, images, tiktok] = await Promise.all([
+    const videoQueryList =
+      videoQueries.length > 0 ? videoQueries : [productName || sceneText];
+    const imageQueryList =
+      imageQueries.length > 0 ? imageQueries : [productName || sceneText];
+
+    // 2) 영상: 각 쿼리로 소량씩 뽑아서 합치기 (국제 커버리지)
+    const ytPerQuery = Math.max(
+      1,
+      Math.ceil(ytLimit / videoQueryList.length),
+    );
+    const tkPerQuery = Math.max(
+      1,
+      Math.ceil(tiktokLimit / videoQueryList.length),
+    );
+    const imgPerQuery = Math.max(
+      1,
+      Math.ceil(imgLimit / imageQueryList.length),
+    );
+
+    const [ytGrouped, imgGrouped, tkGrouped] = await Promise.all([
       ytLimit > 0
-        ? searchYoutubeShorts(query, ytLimit, region, lang)
-        : Promise.resolve([] as SceneAsset[]),
+        ? Promise.all(
+            videoQueryList.map((q) =>
+              searchYoutubeShorts(q, ytPerQuery, region, lang),
+            ),
+          )
+        : Promise.resolve([] as SceneAsset[][]),
       imgLimit > 0
-        ? findWebImages(productQuery, imgLimit)
-        : Promise.resolve([] as SceneAsset[]),
+        ? Promise.all(
+            imageQueryList.map((q) => findWebImages(q, imgPerQuery)),
+          )
+        : Promise.resolve([] as SceneAsset[][]),
       tiktokLimit > 0
-        ? searchTiktok(query, tiktokLimit, lang)
-        : Promise.resolve([] as SceneAsset[]),
+        ? Promise.all(
+            videoQueryList.map((q) => searchTiktok(q, tkPerQuery, lang)),
+          )
+        : Promise.resolve([] as SceneAsset[][]),
     ]);
+
+    const dedupeKey = (a: SceneAsset): string => {
+      if (a.kind === "youtube-short") return `yt:${a.videoId}`;
+      if (a.kind === "web-image") return `img:${a.imageUrl}`;
+      return `tt:${a.videoId}`;
+    };
+
+    const takeUnique = (groups: SceneAsset[][], cap: number): SceneAsset[] => {
+      const seen = new Set<string>();
+      const out: SceneAsset[] = [];
+      for (const g of groups) {
+        for (const a of g) {
+          const k = dedupeKey(a);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          out.push(a);
+          if (out.length >= cap) return out;
+        }
+      }
+      return out;
+    };
+
+    const youtube = takeUnique(ytGrouped as SceneAsset[][], ytLimit);
+    const images = takeUnique(imgGrouped as SceneAsset[][], imgLimit);
+    const tiktok = takeUnique(tkGrouped as SceneAsset[][], tiktokLimit);
 
     const flat: SceneAsset[] = [...youtube, ...tiktok, ...images];
 
     return NextResponse.json({
       sceneText,
       emotion,
-      query,
+      videoQueries: videoQueryList,
+      imageQueries: imageQueryList,
       assets: flat,
       countsBySource: {
         youtube: youtube.length,

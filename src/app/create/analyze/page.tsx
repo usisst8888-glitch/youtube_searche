@@ -32,6 +32,9 @@ export default function AnalyzePage() {
   const [activeSceneIndex, setActiveSceneIndex] = useState<number | null>(
     null,
   );
+  const [queriesBySceneIndex, setQueriesBySceneIndex] = useState<
+    Record<number, { videoQueries: string[]; imageQueries: string[] }>
+  >({});
 
   const handleAnalyze = async () => {
     setError("");
@@ -90,6 +93,13 @@ export default function AnalyzePage() {
       setFetchedSceneAssets((prev) => ({
         ...prev,
         [sceneIndex]: data.assets as WebSceneAsset[],
+      }));
+      setQueriesBySceneIndex((prev) => ({
+        ...prev,
+        [sceneIndex]: {
+          videoQueries: data.videoQueries || [],
+          imageQueries: data.imageQueries || [],
+        },
       }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "오류");
@@ -356,10 +366,40 @@ export default function AnalyzePage() {
                     <p className="text-xs text-zinc-600 dark:text-zinc-400 mb-3 italic">
                       &ldquo;{scene?.text}&rdquo;
                     </p>
-                    <p className="text-xs text-zinc-500 mb-3">
-                      🇺🇸 미국 기반 소스 · 영상 2개 (YouTube) + 이미지 3개
-                      (쇼핑페이지) + TikTok 2개 (가능 시) · 여러 개 선택 가능
+                    <p className="text-xs text-zinc-500 mb-2">
+                      🇺🇸 영상: 한국 외 YouTube + TikTok · 🖼 이미지: 전세계 구글 검색 ·
+                      여러 개 선택 가능
                     </p>
+                    {queriesBySceneIndex[activeSceneIndex] && (
+                      <div className="mb-3 text-[10px] text-zinc-500 space-y-0.5">
+                        <div>
+                          🎬 영상 검색어:{" "}
+                          {queriesBySceneIndex[
+                            activeSceneIndex
+                          ].videoQueries.map((q, i) => (
+                            <code
+                              key={i}
+                              className="px-1 mr-1 bg-zinc-100 dark:bg-zinc-800 rounded"
+                            >
+                              {q}
+                            </code>
+                          ))}
+                        </div>
+                        <div>
+                          🖼 이미지 검색어:{" "}
+                          {queriesBySceneIndex[
+                            activeSceneIndex
+                          ].imageQueries.map((q, i) => (
+                            <code
+                              key={i}
+                              className="px-1 mr-1 bg-zinc-100 dark:bg-zinc-800 rounded"
+                            >
+                              {q}
+                            </code>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {assets.length === 0 ? (
                       <div className="text-sm text-zinc-500 py-6 text-center">
