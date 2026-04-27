@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServer, hasSupabase } from "@/lib/supabase";
-import { getCodeFromRequest, isValidCode } from "@/lib/auth";
+import { requireTeamUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-function requireCode(req: NextRequest): string | null {
-  const code = getCodeFromRequest(req);
-  return isValidCode(code) ? code : null;
+async function requireCode(req: NextRequest): Promise<string | null> {
+  return await requireTeamUser(req);
 }
 
 export async function GET(req: NextRequest) {
@@ -16,7 +15,7 @@ export async function GET(req: NextRequest) {
       { status: 500 },
     );
   }
-  const userCode = requireCode(req);
+  const userCode = await requireCode(req);
   if (!userCode) {
     return NextResponse.json(
       { error: "팀원 접근 코드가 필요합니다." },
@@ -86,7 +85,7 @@ export async function PATCH(req: NextRequest) {
       { status: 500 },
     );
   }
-  const userCode = requireCode(req);
+  const userCode = await requireCode(req);
   if (!userCode) {
     return NextResponse.json(
       { error: "팀원 접근 코드가 필요합니다." },
@@ -129,7 +128,7 @@ export async function DELETE(req: NextRequest) {
       { status: 500 },
     );
   }
-  const userCode = requireCode(req);
+  const userCode = await requireCode(req);
   if (!userCode) {
     return NextResponse.json(
       { error: "팀원 접근 코드가 필요합니다." },

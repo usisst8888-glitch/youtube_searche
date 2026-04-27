@@ -10,14 +10,15 @@ import {
 } from "react";
 
 type AuthState = {
-  code: string | null;
-  setCode: (c: string | null) => void;
+  name: string | null;
+  displayName: string | null;
   signOut: () => void;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
 
-const STORAGE_KEY = "yt_studio_user_code";
+const NAME_KEY = "yt_studio_user_code"; // 헤더 키랑 호환 위해 그대로
+const DISPLAY_KEY = "yt_studio_user_display";
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
@@ -26,43 +27,52 @@ export function useAuth() {
 }
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const [code, setCodeState] = useState<string | null>(null);
+  const [name, setName] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [pending, setPending] = useState(false);
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) setCodeState(saved);
+    const savedName = localStorage.getItem(NAME_KEY);
+    const savedDisplay = localStorage.getItem(DISPLAY_KEY);
+    if (savedName) setName(savedName);
+    if (savedDisplay) setDisplayName(savedDisplay);
     setLoaded(true);
   }, []);
 
-  const setCode = useCallback((c: string | null) => {
-    setCodeState(c);
-    if (c) localStorage.setItem(STORAGE_KEY, c);
-    else localStorage.removeItem(STORAGE_KEY);
-  }, []);
+  const persist = useCallback(
+    (n: string | null, d: string | null) => {
+      setName(n);
+      setDisplayName(d);
+      if (n) localStorage.setItem(NAME_KEY, n);
+      else localStorage.removeItem(NAME_KEY);
+      if (d) localStorage.setItem(DISPLAY_KEY, d);
+      else localStorage.removeItem(DISPLAY_KEY);
+    },
+    [],
+  );
 
-  const signOut = useCallback(() => setCode(null), [setCode]);
+  const signOut = useCallback(() => persist(null, null), [persist]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    if (!input.trim()) return setError("코드를 입력하세요.");
+    if (!input.trim()) return setError("이름을 입력하세요.");
     setPending(true);
     try {
       const res = await fetch("/api/auth/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: input.trim() }),
+        body: JSON.stringify({ name: input.trim() }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
         setError(data.error || "인증 실패");
         return;
       }
-      setCode(data.code);
+      persist(data.name, data.displayName ?? null);
       setInput("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "오류");
@@ -79,21 +89,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!code) {
+  if (!name) {
     return (
       <div className="max-w-sm mx-auto py-12">
         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-          <h2 className="text-lg font-bold mb-1">🔐 팀원 접근 코드</h2>
+          <h2 className="text-lg font-bold mb-1">🔐 팀원 로그인</h2>
           <p className="text-xs text-zinc-500 mb-4">
-            관리자가 알려준 본인 코드를 입력하세요. 썰 라이브러리는
-            코드별로 분리됩니다.
+            관리자에게 등록된 본인 이름을 입력하세요. 썰 라이브러리는
+            사람별로 분리됩니다.
           </p>
           <form onSubmit={handleSubmit} className="space-y-3">
             <input
               type="text"
               value={input}
-              onChange={(e) => setInput(e.target.value.toUpperCase())}
-              placeholder="예: BAECHEOL"
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="예: 배철웅"
               autoFocus
               className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
             />
@@ -110,16 +120,22 @@ export function AuthGate({ children }: { children: ReactNode }) {
               </p>
             )}
           </form>
+          <p className="mt-4 text-[11px] text-zinc-500">
+            등록되지 않은 사람은 관리자가 Supabase{" "}
+            <code className="font-mono">team_users</code> 테이블에
+            추가해야 입장 가능.
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <AuthContext.Provider value={{ code, setCode, signOut }}>
+    <AuthContext.Provider value={{ name, displayName, signOut }}>
       <div className="mb-4 flex items-center justify-end gap-2 text-xs text-zinc-500">
         <span>
-          🔐 <code className="font-mono">{code}</code>
+          🔐 <b>{name}</b>
+          {displayName && <span className="ml-1">({displayName})</span>}
         </span>
         <button
           type="button"

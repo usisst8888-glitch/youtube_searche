@@ -6,7 +6,7 @@ import {
   embedTexts,
 } from "@/lib/gemini";
 import { getSupabaseServer, hasSupabase } from "@/lib/supabase";
-import { getCodeFromRequest, isValidCode } from "@/lib/auth";
+import { requireTeamUser } from "@/lib/auth";
 
 export const maxDuration = 180;
 export const runtime = "nodejs";
@@ -119,10 +119,10 @@ JSON. angles 배열에 ${count}개.
 
 export async function POST(req: NextRequest) {
   try {
-    const userCode = getCodeFromRequest(req);
-    if (!isValidCode(userCode)) {
+    const userCode = await requireTeamUser(req);
+    if (!userCode) {
       return NextResponse.json(
-        { error: "팀원 접근 코드가 필요합니다." },
+        { error: "등록되지 않은 사용자입니다. 다시 로그인해주세요." },
         { status: 401 },
       );
     }

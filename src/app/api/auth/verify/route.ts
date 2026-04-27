@@ -1,25 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isValidCode } from "@/lib/auth";
+import { lookupTeamUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
-    const { code } = await req.json();
-    if (!code || typeof code !== "string") {
+    const { name } = await req.json();
+    if (!name || typeof name !== "string") {
       return NextResponse.json(
-        { ok: false, error: "코드를 입력하세요." },
+        { ok: false, error: "이름을 입력하세요." },
         { status: 400 },
       );
     }
-    const trimmed = code.trim();
-    if (!isValidCode(trimmed)) {
+    const user = await lookupTeamUser(name.trim());
+    if (!user) {
       return NextResponse.json(
-        { ok: false, error: "유효하지 않은 코드입니다." },
+        { ok: false, error: "등록되지 않은 이름입니다. 관리자에게 문의하세요." },
         { status: 401 },
       );
     }
-    return NextResponse.json({ ok: true, code: trimmed });
+    return NextResponse.json({
+      ok: true,
+      name: user.name,
+      displayName: user.displayName,
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : "서버 오류";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
