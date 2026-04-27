@@ -112,7 +112,12 @@ export default function FinalizePage() {
   const [textColor, setTextColor] = useState("#000000");
   const [fontSize, setFontSize] = useState(72);
   const [topRatio, setTopRatio] = useState(0.3); // 상단 비율 (0.1 ~ 0.6)
-  const [sceneTitles, setSceneTitles] = useState<Record<number, string>>({});
+  const [headerText, setHeaderText] = useState("");
+
+  // storyTopic 바뀌면 헤더 기본값 동기화 (사용자가 수정 안 했을 때만)
+  useEffect(() => {
+    setHeaderText((cur) => cur || storyTopic || "");
+  }, [storyTopic]);
 
   // 비율을 짝수 픽셀로 정렬 (libx264는 짝수 해상도 요구)
   const TOP_HEIGHT =
@@ -142,13 +147,7 @@ export default function FinalizePage() {
     0,
   );
 
-  const titleForScene = (idx: number): string => {
-    if (sceneTitles[idx] !== undefined) return sceneTitles[idx];
-    const text = generatedScenes[idx]?.text || "";
-    // 짧게: 첫 문장 또는 30자
-    const firstSentence = text.split(/[.!?]/)[0] || text;
-    return firstSentence.slice(0, 32);
-  };
+  const headerTextResolved = (headerText || storyTopic || "").trim();
 
   // 라이브 미리보기 (씬 1)
   useEffect(() => {
@@ -172,7 +171,7 @@ export default function FinalizePage() {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     const padding = 20;
-    const lines = wrapText(ctx, titleForScene(0), 360 - padding * 2);
+    const lines = wrapText(ctx, headerTextResolved, 360 - padding * 2);
     const lineHeight = previewFontSize * 1.25;
     const startY = topH / 2 - ((lines.length - 1) * lineHeight) / 2;
     lines.forEach((line, i) => {
@@ -185,7 +184,7 @@ export default function FinalizePage() {
     ctx.font = "16px sans-serif";
     ctx.fillText("[ 영상/이미지 영역 ]", 180, topH + (640 - topH) / 2);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgColor, textColor, fontSize, sceneTitles, generatedScenes, topRatio]);
+  }, [bgColor, textColor, fontSize, headerTextResolved, generatedScenes, topRatio]);
 
   const handleTts = async () => {
     setError("");
@@ -289,7 +288,7 @@ export default function FinalizePage() {
         const titlePng = await renderTitleBarPng({
           width: TEMPLATE.width,
           height: TOP_HEIGHT,
-          text: titleForScene(scene.index),
+          text: headerTextResolved,
           bgColor,
           textColor,
           fontSize,
@@ -660,32 +659,21 @@ export default function FinalizePage() {
           </div>
         </div>
 
-        {/* 씬별 텍스트 편집 */}
+        {/* 헤더 텍스트 (모든 씬 동일 — 주제 자동 입력) */}
         <div className="mt-4 border-t border-zinc-200 dark:border-zinc-800 pt-3">
-          <div className="text-xs text-zinc-500 mb-2">
-            각 씬의 상단 텍스트 (비우면 해당 씬 대본 첫 문장 사용)
-          </div>
-          <div className="space-y-2">
-            {generatedScenes.map((s) => (
-              <div key={s.index} className="flex gap-2 items-start">
-                <span className="text-xs text-zinc-500 mt-1.5 shrink-0">
-                  씬 {s.index + 1}
-                </span>
-                <input
-                  type="text"
-                  value={sceneTitles[s.index] ?? titleForScene(s.index)}
-                  onChange={(e) =>
-                    setSceneTitles((prev) => ({
-                      ...prev,
-                      [s.index]: e.target.value,
-                    }))
-                  }
-                  placeholder={titleForScene(s.index)}
-                  className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded px-2 py-1 text-xs"
-                />
-              </div>
-            ))}
-          </div>
+          <label className="block text-xs font-medium mb-1">
+            상단 헤더 텍스트{" "}
+            <span className="text-zinc-500">
+              (모든 씬에 동일하게 표시 — 비우면 주제 사용)
+            </span>
+          </label>
+          <input
+            type="text"
+            value={headerText}
+            onChange={(e) => setHeaderText(e.target.value)}
+            placeholder={storyTopic || "예: 왜 동그란 모양일까?"}
+            className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
+          />
         </div>
       </section>
 
