@@ -49,15 +49,40 @@ const CANDIDATE_SCHEMA = {
   required: ["angles"],
 };
 
+const CATEGORY_DEFS: Record<string, string> = {
+  식품: "과자, 음료, 라면, 즉석식품, 빵, 아이스크림, 디저트, 건강식품",
+  뷰티: "스킨케어, 메이크업, 향수, 헤어케어, 바디케어",
+  가전: "전기 가전 제품 (TV, 청소기, 공기청정기, 에어프라이어 등)",
+  생활: "청소용품, 수납, 욕실용품, 침구, 일반 생활잡화",
+  패션: "의류, 가방, 신발, 액세서리, 시계",
+  IT: "컴퓨터, 노트북, 키보드, 마우스, 헤드셋, 모니터, 스마트폰 액세서리",
+  문구: "펜, 노트, 다이어리, 사무용품",
+  주방: "냄비/팬, 칼, 그릇, 컵, 주방 도구 (전기 제품 제외)",
+  반려: "강아지·고양이 사료, 용품, 장난감",
+  스포츠:
+    "운동복, 운동화, 운동기구, 골프 장비, 자전거, 등산·캠핑·낚시 장비, 헬스용품",
+  기타: "위 분류에 명확히 들어가지 않는 제품",
+};
+
 function buildPrompt(
   category: string,
   count: number,
   recentExamples: { productName: string; angle: string }[],
 ): string {
-  const categoryLine =
-    category && category !== "전체"
-      ? `카테고리: ${category}`
-      : "카테고리: 자유롭게 (식품/뷰티/가전/생활/패션/IT/스포츠/반려 등 다양하게)";
+  const isAll = !category || category === "전체";
+  const categoryBlock = isAll
+    ? `## 카테고리: 자유롭게 (다양한 분야)
+다음 분류 중 골고루 섞어서 추천:
+${Object.entries(CATEGORY_DEFS)
+  .map(([k, v]) => `- ${k}: ${v}`)
+  .join("\n")}`
+    : `## ⚠️ 카테고리 엄격 준수: "${category}" 만
+"${category}" = ${CATEGORY_DEFS[category] || "?"}
+
+❌ 다른 카테고리(${Object.keys(CATEGORY_DEFS)
+        .filter((c) => c !== category)
+        .join("/")}) 절대 금지.
+✅ 출력 시 productCategory 필드는 **반드시 "${category}"**로 적기 (세부 분류 X).`;
 
   const excludeBlock =
     recentExamples.length > 0
@@ -74,7 +99,7 @@ function buildPrompt(
 ## 과제
 한국 사람들이 **"헐, 진짜?"** 반응할 만한 **실제 제품 관련 썰 ${count}개** 생성.
 
-${categoryLine}
+${categoryBlock}
 ${excludeBlock}
 
 ## 썰의 조건
@@ -216,8 +241,44 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // 카테고리 강제 매칭 — 단어 포함 기반 정규화
+    const normalizeCategoryName = (raw: string): string => {
+      const lc = (raw || "").toLowerCase();
+      if (
+        /스포츠|운동|등산|캠핑|골프|자전거|헬스|낚시|스키|보드/.test(lc)
+      )
+        return "스포츠";
+      if (/식품|음료|과자|라면|간식|음식|디저트|아이스크림/.test(lc))
+        return "식품";
+      if (/뷰티|화장|스킨|메이크업|향수|헤어|샴푸/.test(lc)) return "뷰티";
+      if (/가전|tv|청소기|에어프라|공기청정/.test(lc)) return "가전";
+      if (/주방|냄비|팬|그릇|컵|칼/.test(lc)) return "주방";
+      if (/패션|의류|옷|가방|신발|액세서리|시계/.test(lc)) return "패션";
+      if (/it|노트북|키보드|마우스|헤드셋|모니터|스마트폰|이어폰/.test(lc))
+        return "IT";
+      if (/문구|펜|노트|다이어리|사무/.test(lc)) return "문구";
+      if (/반려|강아지|고양이|펫/.test(lc)) return "반려";
+      if (/생활|청소|수납|욕실|침구/.test(lc)) return "생활";
+      return "기타";
+    };
+
+    const requestedCategory =
+      category && category !== "전체" ? category : null;
+
+    const filteredCandidates = candidates
+      .map((c) => ({
+        ...c,
+        productCategory: normalizeCategoryName(c.productCategory),
+      }))
+      .filter((c) => {
+        if (!requestedCategory) return true;
+        return c.productCategory === requestedCategory;
+      });
+
+    const droppedByCategory = candidates.length - filteredCandidates.length;
+
     // 3) 각 후보 → "productName || angle" 문자열로 임베딩
-    const textsForEmbed = candidates.map(
+    const textsForEmbed = filteredCandidates.map(
       (c) => `${c.productName} | ${c.angle} | ${c.fact}`,
     );
     const embeddings = await embedTexts(textsForEmbed);
@@ -226,8 +287,8 @@ export async function POST(req: NextRequest) {
     const unique: (Candidate & { embedding: number[] })[] = [];
     const duplicates: { candidate: Candidate; matchedName: string }[] = [];
 
-    for (let i = 0; i < candidates.length; i++) {
-      const c = candidates[i];
+    for (let i = 0; i < filteredCandidates.length; i++) {
+      const c = filteredCandidates[i];
       const emb = embeddings[i];
       if (!emb || emb.length === 0) continue;
 
@@ -295,6 +356,7 @@ export async function POST(req: NextRequest) {
       generated: unique.length,
       requested,
       duplicatesSkipped: duplicates.length,
+      categoryDropped: droppedByCategory,
       items: inserted || [],
     });
   } catch (e) {
