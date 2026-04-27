@@ -121,7 +121,7 @@ function koreanRatio(s: string): number {
 async function searchYoutubeShorts(
   query: string,
   limit = 2,
-  region = "US",
+  region = "",
   lang = "en",
 ): Promise<SceneAsset[]> {
   const key = process.env.YOUTUBE_API_KEY;
@@ -130,7 +130,7 @@ async function searchYoutubeShorts(
     const published = new Date(
       Date.now() - 3 * 365 * 24 * 60 * 60 * 1000,
     ).toISOString();
-    // 풀 확대: 50개 (최대) — 이후 필터링하고 남는 게 적을 수 있어서
+    // regionCode 비워두면 YouTube가 글로벌 결과 반환 (특정 국가로 제한 X)
     let searched = await searchShorts(key, query, 50, region, lang, published);
     if (searched.length === 0) return [];
     const stats = await getVideoStats(
@@ -453,7 +453,7 @@ export async function POST(req: NextRequest) {
       sceneText,
       productName,
       emotion,
-      region = "US",
+      region = "",
       lang = "en",
       ytLimit = 2,
       imgLimit = 3,

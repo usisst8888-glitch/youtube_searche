@@ -123,9 +123,9 @@ export async function searchShorts(
       videoDuration: "short",
       maxResults: String(Math.min(50, max - results.length)),
       order: "relevance",
-      regionCode: region,
-      relevanceLanguage: lang,
     };
+    if (region) params.regionCode = region;
+    if (lang) params.relevanceLanguage = lang;
     if (keyword) params.q = keyword;
     if (publishedAfter) params.publishedAfter = publishedAfter;
     if (videoCategoryId) params.videoCategoryId = videoCategoryId;

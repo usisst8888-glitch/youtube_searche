@@ -81,7 +81,7 @@ export default function AnalyzePage() {
           sceneText: scene.text,
           emotion: scene.emotion,
           productName,
-          region: "US",
+          region: "",
           lang: "en",
           ytLimit: 2,
           imgLimit: 3,
@@ -367,8 +367,8 @@ export default function AnalyzePage() {
                       &ldquo;{scene?.text}&rdquo;
                     </p>
                     <p className="text-xs text-zinc-500 mb-2">
-                      🇺🇸 영상: 한국 외 YouTube + TikTok · 🖼 이미지: 전세계 구글 검색 ·
-                      여러 개 선택 가능
+                      🌐 영상: 전세계 YouTube (지역 제한 X, 영어 검색어 + 한국 채널 배제) ·
+                      🖼 이미지: 전세계 구글 · 여러 개 선택 가능
                     </p>
                     {queriesBySceneIndex[activeSceneIndex] && (
                       <div className="mb-3 text-[10px] text-zinc-500 space-y-0.5">
