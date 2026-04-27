@@ -15,8 +15,13 @@ export type TeamUser = {
 
 export function getNameFromRequest(req: Request): string | null {
   const header = req.headers.get(USER_NAME_HEADER);
-  if (header && header.trim()) return header.trim();
-  return null;
+  if (!header || !header.trim()) return null;
+  // 클라이언트가 URL 인코딩으로 보냈을 가능성이 있어서 디코드
+  try {
+    return decodeURIComponent(header.trim());
+  } catch {
+    return header.trim();
+  }
 }
 
 export async function lookupTeamUser(
