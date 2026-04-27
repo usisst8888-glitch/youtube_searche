@@ -427,7 +427,7 @@ export default function AnalyzePage() {
                             a.kind === "youtube-short" || a.kind === "tiktok";
                           const previewUrl =
                             a.kind === "youtube-short"
-                              ? `https://www.youtube.com/embed/${a.videoId}?autoplay=1&mute=1&controls=0&loop=1&playlist=${a.videoId}&modestbranding=1`
+                              ? `https://www.youtube-nocookie.com/embed/${a.videoId}?autoplay=1&mute=1&controls=0&loop=1&playlist=${a.videoId}&modestbranding=1&rel=0`
                               : a.kind === "tiktok"
                                 ? `https://www.tiktok.com/embed/v2/${a.videoId}?autoplay=1&music_info=0`
                                 : "";

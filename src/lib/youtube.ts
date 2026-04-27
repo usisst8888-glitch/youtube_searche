@@ -38,6 +38,7 @@ export type VideoStats = {
   durationSec: number;
   isShorts: boolean;
   thumbnail: string;
+  embeddable: boolean;
 };
 
 export type OutlierResult = {
@@ -157,7 +158,7 @@ export async function getVideoStats(
     const data = await ytFetch(
       "videos",
       {
-        part: "statistics,snippet,contentDetails",
+        part: "statistics,snippet,contentDetails,status",
         id: batch.join(","),
       },
       apiKey,
@@ -167,6 +168,7 @@ export async function getVideoStats(
       const thumbs = item.snippet.thumbnails || {};
       const thumb =
         thumbs.medium?.url || thumbs.default?.url || thumbs.high?.url || "";
+      const embeddable = item.status?.embeddable !== false; // null/missing = 허용
       stats[item.id] = {
         views: parseInt(item.statistics?.viewCount || "0", 10),
         likes: parseInt(item.statistics?.likeCount || "0", 10),
@@ -177,6 +179,7 @@ export async function getVideoStats(
         durationSec: dur,
         isShorts: dur > 0 && dur <= SHORTS_MAX_SEC,
         thumbnail: thumb,
+        embeddable,
       };
     }
   }

@@ -155,8 +155,9 @@ async function searchYoutubeShorts(
 
     const queryTokens = tokenize(query);
 
-    // 한국 채널 배제 + 제목/채널에 쿼리 토큰 포함된 것 우선
+    // 임베드 불가 영상 + 한국 채널 배제 + 제목/채널에 쿼리 토큰 포함된 것 우선
     const scored = searched
+      .filter((s) => stats[s.videoId]?.embeddable !== false)
       .filter((s) => {
         const channel = s.channelTitle || "";
         return !hasKoreanChars(channel) || koreanRatio(channel) < 0.9;
@@ -178,7 +179,7 @@ async function searchYoutubeShorts(
       thumbnail: stats[s.videoId]?.thumbnail || "",
       views: stats[s.videoId]?.views || 0,
       channel: s.channelTitle,
-      embedUrl: `https://www.youtube.com/embed/${s.videoId}`,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${s.videoId}`,
       watchUrl: `https://www.youtube.com/shorts/${s.videoId}`,
     }));
   } catch {
