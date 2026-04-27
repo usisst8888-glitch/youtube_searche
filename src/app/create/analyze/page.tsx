@@ -83,9 +83,9 @@ export default function AnalyzePage() {
           productName,
           region: "",
           lang: "en",
-          ytLimit: 2,
-          imgLimit: 3,
-          tiktokLimit: 2,
+          ytLimit: 8,
+          imgLimit: 6,
+          tiktokLimit: 3,
         }),
       });
       const data = await res.json();
@@ -367,8 +367,8 @@ export default function AnalyzePage() {
                       &ldquo;{scene?.text}&rdquo;
                     </p>
                     <p className="text-xs text-zinc-500 mb-2">
-                      🌐 영상: 전세계 YouTube (지역 제한 X, 영어 검색어 + 한국 채널 배제) ·
-                      🖼 이미지: 전세계 구글 · 여러 개 선택 가능
+                      🎬 YouTube 영상 8개 · 🖼 이미지 6개 · 🎵 TikTok 3개 (가능 시) ·
+                      여러 개 선택 가능. 한국 채널은 자동 배제.
                     </p>
                     {queriesBySceneIndex[activeSceneIndex] && (
                       <div className="mb-3 text-[10px] text-zinc-500 space-y-0.5">

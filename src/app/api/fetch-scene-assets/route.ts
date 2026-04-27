@@ -118,26 +118,34 @@ function koreanRatio(s: string): number {
   return kor / nonSpace;
 }
 
+function tokenize(s: string): string[] {
+  return s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((t) => t.length >= 2);
+}
+
 async function searchYoutubeShorts(
   query: string,
-  limit = 2,
+  limit = 8,
   region = "",
   lang = "",
 ): Promise<SceneAsset[]> {
   const key = process.env.YOUTUBE_API_KEY;
   if (!key) return [];
   try {
-    // 모든 시간대, 두 가지 정렬(relevance + viewCount)로 풀 합쳐서 더 많이 가져옴
-    const [byRelevance, byViews] = await Promise.all([
-      searchShorts(key, query, 50, region, lang, undefined, undefined, "relevance").catch(() => []),
-      searchShorts(key, query, 50, region, lang, undefined, undefined, "viewCount").catch(() => []),
-    ]);
-
-    const dedup = new Map<string, (typeof byRelevance)[number]>();
-    for (const s of [...byRelevance, ...byViews]) {
-      if (!dedup.has(s.videoId)) dedup.set(s.videoId, s);
-    }
-    let searched = Array.from(dedup.values());
+    // YouTube 자체 관련성 순서를 유지 (조회수 순 X — 모호한 키워드일 때 야구 영상 등이 올라옴)
+    const searched = await searchShorts(
+      key,
+      query,
+      50,
+      region,
+      lang,
+      undefined,
+      undefined,
+      "relevance",
+    );
     if (searched.length === 0) return [];
 
     const stats = await getVideoStats(
@@ -145,19 +153,25 @@ async function searchYoutubeShorts(
       searched.map((s) => s.videoId),
     );
 
-    // 한국 채널만 배제 (90% 이상 한글일 때만, 매우 관대)
-    searched = searched.filter((s) => {
-      const channel = s.channelTitle || "";
-      return !hasKoreanChars(channel) || koreanRatio(channel) < 0.9;
-    });
+    const queryTokens = tokenize(query);
 
-    // 정렬: 조회수 순 (인기 영상 우선)
-    const sorted = [...searched].sort(
-      (a, b) =>
-        (stats[b.videoId]?.views || 0) - (stats[a.videoId]?.views || 0),
-    );
+    // 한국 채널 배제 + 제목/채널에 쿼리 토큰 포함된 것 우선
+    const scored = searched
+      .filter((s) => {
+        const channel = s.channelTitle || "";
+        return !hasKoreanChars(channel) || koreanRatio(channel) < 0.9;
+      })
+      .map((s) => {
+        const title = stats[s.videoId]?.title || "";
+        const channel = s.channelTitle || "";
+        const haystack = (title + " " + channel).toLowerCase();
+        const matches = queryTokens.filter((t) => haystack.includes(t)).length;
+        return { item: s, matches };
+      })
+      // 토큰 매치 많은 순 → YouTube 관련성 순서 유지
+      .sort((a, b) => b.matches - a.matches);
 
-    return sorted.slice(0, limit).map<SceneAsset>((s) => ({
+    return scored.slice(0, limit).map<SceneAsset>(({ item: s }) => ({
       kind: "youtube-short",
       videoId: s.videoId,
       title: stats[s.videoId]?.title || "",
@@ -465,9 +479,9 @@ export async function POST(req: NextRequest) {
       emotion,
       region = "",
       lang = "en",
-      ytLimit = 2,
-      imgLimit = 3,
-      tiktokLimit = 2,
+      ytLimit = 8,
+      imgLimit = 6,
+      tiktokLimit = 3,
     } = await req.json();
 
     if (!sceneText || typeof sceneText !== "string") {
