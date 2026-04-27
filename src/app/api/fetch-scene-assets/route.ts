@@ -122,39 +122,41 @@ async function searchYoutubeShorts(
   query: string,
   limit = 2,
   region = "",
-  lang = "en",
+  lang = "",
 ): Promise<SceneAsset[]> {
   const key = process.env.YOUTUBE_API_KEY;
   if (!key) return [];
   try {
-    const published = new Date(
-      Date.now() - 3 * 365 * 24 * 60 * 60 * 1000,
-    ).toISOString();
-    // regionCode 비워두면 YouTube가 글로벌 결과 반환 (특정 국가로 제한 X)
-    let searched = await searchShorts(key, query, 50, region, lang, published);
+    // 모든 시간대, 두 가지 정렬(relevance + viewCount)로 풀 합쳐서 더 많이 가져옴
+    const [byRelevance, byViews] = await Promise.all([
+      searchShorts(key, query, 50, region, lang, undefined, undefined, "relevance").catch(() => []),
+      searchShorts(key, query, 50, region, lang, undefined, undefined, "viewCount").catch(() => []),
+    ]);
+
+    const dedup = new Map<string, (typeof byRelevance)[number]>();
+    for (const s of [...byRelevance, ...byViews]) {
+      if (!dedup.has(s.videoId)) dedup.set(s.videoId, s);
+    }
+    let searched = Array.from(dedup.values());
     if (searched.length === 0) return [];
+
     const stats = await getVideoStats(
       key,
       searched.map((s) => s.videoId),
     );
-    searched = searched.filter((s) => stats[s.videoId]?.isShorts);
 
-    // 한국 채널 배제 — 채널명 기준만, 70% 이상 한글일 때만 탈락 (관대하게)
-    //                제목에 한글이 있어도 통과 (외국 리뷰어가 제품 이름 한글 병기 가능)
+    // 한국 채널만 배제 (90% 이상 한글일 때만, 매우 관대)
     searched = searched.filter((s) => {
       const channel = s.channelTitle || "";
-      return !hasKoreanChars(channel) || koreanRatio(channel) < 0.7;
+      return !hasKoreanChars(channel) || koreanRatio(channel) < 0.9;
     });
 
-    // 실제 쇼츠 URL 검증은 "가능하면" 적용 (너무 엄격하면 결과 0)
-    const verified = await filterActualShorts(searched);
-    // 검증 통과분이 충분하면 그것만, 아니면 원본 유지
-    const finalList = verified.length >= limit ? verified : searched;
-
-    const sorted = [...finalList].sort(
+    // 정렬: 조회수 순 (인기 영상 우선)
+    const sorted = [...searched].sort(
       (a, b) =>
         (stats[b.videoId]?.views || 0) - (stats[a.videoId]?.views || 0),
     );
+
     return sorted.slice(0, limit).map<SceneAsset>((s) => ({
       kind: "youtube-short",
       videoId: s.videoId,

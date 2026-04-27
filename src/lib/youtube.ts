@@ -113,6 +113,7 @@ export async function searchShorts(
   lang: string,
   publishedAfter?: string,
   videoCategoryId?: string,
+  order: "relevance" | "viewCount" | "date" | "rating" | "title" = "relevance",
 ): Promise<SearchItem[]> {
   const results: SearchItem[] = [];
   let pageToken = "";
@@ -122,7 +123,7 @@ export async function searchShorts(
       type: "video",
       videoDuration: "short",
       maxResults: String(Math.min(50, max - results.length)),
-      order: "relevance",
+      order,
     };
     if (region) params.regionCode = region;
     if (lang) params.relevanceLanguage = lang;
