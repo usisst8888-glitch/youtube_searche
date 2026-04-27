@@ -7,12 +7,9 @@ import { ProjectProvider } from "./context";
 import { AuthGate } from "./auth-gate";
 
 const STEPS = [
-  { href: "/create/research", label: "0. 제품 리서치" },
-  { href: "/create/analyze", label: "1. 상품 & 대본" },
-  { href: "/create/images", label: "2. 비주얼 스타일" },
-  { href: "/create/scenes", label: "3. 씬 이미지" },
-  { href: "/create/videos", label: "4. 씬 비디오" },
-  { href: "/create/finalize", label: "5. 최종 합성" },
+  { href: "/create/research", label: "1. 썰 발굴" },
+  { href: "/create/analyze", label: "2. 대본 + 소재" },
+  { href: "/create/finalize", label: "3. 영상 합성" },
 ];
 
 export default function CreateLayout({ children }: { children: ReactNode }) {

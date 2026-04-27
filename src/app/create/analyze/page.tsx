@@ -504,10 +504,10 @@ export default function AnalyzePage() {
             ← 이전: 제품 리서치
           </Link>
           <Link
-            href="/create/images"
+            href="/create/finalize"
             className="text-sm font-medium text-red-500 hover:underline"
           >
-            다음: 비주얼 스타일 →
+            다음: 영상 합성 →
           </Link>
         </div>
       )}
