@@ -119,13 +119,14 @@ JSON. angles 배열에 ${count}개.
 
 export async function POST(req: NextRequest) {
   try {
-    const userCode = await requireTeamUser(req);
-    if (!userCode) {
+    const teamUser = await requireTeamUser(req);
+    if (!teamUser) {
       return NextResponse.json(
         { error: "등록되지 않은 사용자입니다. 다시 로그인해주세요." },
         { status: 401 },
       );
     }
+    const userId = teamUser.id;
 
     const {
       category = "전체",
@@ -155,11 +156,11 @@ export async function POST(req: NextRequest) {
 
     const supa = getSupabaseServer();
 
-    // 1) 본인 user_code의 최근 앵글만 가져와서 Gemini에 "제외 리스트"로 전달
+    // 1) 본인 user_id의 최근 앵글만 가져와서 Gemini에 "제외 리스트"로 전달
     const { data: recent } = await supa
       .from("story_angles")
       .select("product_name, angle")
-      .eq("user_code", userCode)
+      .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(50);
 
@@ -236,7 +237,7 @@ export async function POST(req: NextRequest) {
           query_embedding: emb,
           match_threshold: similarityThreshold,
           match_count: 1,
-          user_code_filter: userCode,
+          user_id_filter: userId,
         },
       );
       if (rpcErr) {
@@ -263,7 +264,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 5) DB에 insert (user_code 포함)
+    // 5) DB에 insert (user_id로 분리)
     const rowsToInsert = unique.map((u) => ({
       product_name: u.productName,
       product_category: u.productCategory || category,
@@ -273,7 +274,7 @@ export async function POST(req: NextRequest) {
       sources: u.sources || [],
       embedding: u.embedding,
       status: "idea" as const,
-      user_code: userCode,
+      user_id: userId,
     }));
 
     const { data: inserted, error: insErr } = await supa

@@ -4,8 +4,9 @@ import { requireTeamUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-async function requireCode(req: NextRequest): Promise<string | null> {
-  return await requireTeamUser(req);
+async function requireUserId(req: NextRequest): Promise<string | null> {
+  const u = await requireTeamUser(req);
+  return u?.id ?? null;
 }
 
 export async function GET(req: NextRequest) {
@@ -15,8 +16,8 @@ export async function GET(req: NextRequest) {
       { status: 500 },
     );
   }
-  const userCode = await requireCode(req);
-  if (!userCode) {
+  const userId = await requireUserId(req);
+  if (!userId) {
     return NextResponse.json(
       { error: "팀원 접근 코드가 필요합니다." },
       { status: 401 },
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
         "id, product_name, product_category, angle, hook, fact, sources, status, created_at",
         { count: "exact" },
       )
-      .eq("user_code", userCode)
+      .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -58,7 +59,7 @@ export async function GET(req: NextRequest) {
     const { data: stats } = await supa
       .from("story_angles")
       .select("status")
-      .eq("user_code", userCode);
+      .eq("user_id", userId);
     const counts = {
       all: stats?.length || 0,
       idea: 0,
@@ -85,8 +86,8 @@ export async function PATCH(req: NextRequest) {
       { status: 500 },
     );
   }
-  const userCode = await requireCode(req);
-  if (!userCode) {
+  const userId = await requireUserId(req);
+  if (!userId) {
     return NextResponse.json(
       { error: "팀원 접근 코드가 필요합니다." },
       { status: 401 },
@@ -112,7 +113,7 @@ export async function PATCH(req: NextRequest) {
       .from("story_angles")
       .update({ status })
       .eq("id", id)
-      .eq("user_code", userCode);
+      .eq("user_id", userId);
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch (e) {
@@ -128,8 +129,8 @@ export async function DELETE(req: NextRequest) {
       { status: 500 },
     );
   }
-  const userCode = await requireCode(req);
-  if (!userCode) {
+  const userId = await requireUserId(req);
+  if (!userId) {
     return NextResponse.json(
       { error: "팀원 접근 코드가 필요합니다." },
       { status: 401 },
@@ -145,7 +146,7 @@ export async function DELETE(req: NextRequest) {
       .from("story_angles")
       .delete()
       .eq("id", id)
-      .eq("user_code", userCode);
+      .eq("user_id", userId);
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch (e) {
