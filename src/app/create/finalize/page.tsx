@@ -7,17 +7,14 @@ import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import { useProject, WebSceneAsset } from "../context";
 import { authFetch } from "@/lib/auth-fetch";
 
-// 기본 쇼츠 템플릿 (3:7)
+// 기본 쇼츠 템플릿 (3:7 default — 비율은 UI에서 조절)
 const TEMPLATE = {
   width: 720,
   height: 1280,
-  topRatio: 0.3,
   fps: 30,
   bgmVolume: 0.15,
   ttsVolume: 1.0,
 };
-const TOP_HEIGHT = Math.round(TEMPLATE.height * TEMPLATE.topRatio); // 384
-const BOTTOM_HEIGHT = TEMPLATE.height - TOP_HEIGHT; // 896
 
 function assetToImageUrl(a: WebSceneAsset): string {
   if (a.kind === "youtube-short") return a.thumbnail;
@@ -114,7 +111,13 @@ export default function FinalizePage() {
   const [bgColor, setBgColor] = useState("#FFE600");
   const [textColor, setTextColor] = useState("#000000");
   const [fontSize, setFontSize] = useState(72);
+  const [topRatio, setTopRatio] = useState(0.3); // 상단 비율 (0.1 ~ 0.6)
   const [sceneTitles, setSceneTitles] = useState<Record<number, string>>({});
+
+  // 비율을 짝수 픽셀로 정렬 (libx264는 짝수 해상도 요구)
+  const TOP_HEIGHT =
+    Math.round((TEMPLATE.height * topRatio) / 2) * 2;
+  const BOTTOM_HEIGHT = TEMPLATE.height - TOP_HEIGHT;
 
   const [ttsLoading, setTtsLoading] = useState(false);
   const [bgmLoading, setBgmLoading] = useState(false);
@@ -158,8 +161,8 @@ export default function FinalizePage() {
     // 배경 (전체)
     ctx.fillStyle = "#1a1a1a";
     ctx.fillRect(0, 0, 360, 640);
-    // 상단 영역 (30%)
-    const topH = Math.round(640 * TEMPLATE.topRatio);
+    // 상단 영역
+    const topH = Math.round(640 * topRatio);
     ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, 360, topH);
     // 텍스트
@@ -182,7 +185,7 @@ export default function FinalizePage() {
     ctx.font = "16px sans-serif";
     ctx.fillText("[ 영상/이미지 영역 ]", 180, topH + (640 - topH) / 2);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgColor, textColor, fontSize, sceneTitles, generatedScenes]);
+  }, [bgColor, textColor, fontSize, sceneTitles, generatedScenes, topRatio]);
 
   const handleTts = async () => {
     setError("");
@@ -616,6 +619,43 @@ export default function FinalizePage() {
                 onChange={(e) => setFontSize(parseInt(e.target.value, 10))}
                 className="w-full accent-red-500"
               />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium mb-1">
+                상단 비율: {Math.round(topRatio * 100)}% / 하단{" "}
+                {Math.round((1 - topRatio) * 100)}%
+              </label>
+              <input
+                type="range"
+                min={0.1}
+                max={0.6}
+                step={0.05}
+                value={topRatio}
+                onChange={(e) => setTopRatio(parseFloat(e.target.value))}
+                className="w-full accent-red-500"
+              />
+              <div className="mt-1 flex flex-wrap gap-1">
+                {[
+                  { v: 0.2, label: "2:8" },
+                  { v: 0.3, label: "3:7" },
+                  { v: 0.4, label: "4:6" },
+                  { v: 0.5, label: "5:5" },
+                ].map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => setTopRatio(p.v)}
+                    className={`text-[10px] px-2 py-0.5 rounded ${
+                      Math.abs(topRatio - p.v) < 0.01
+                        ? "bg-red-500 text-white"
+                        : "bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>
