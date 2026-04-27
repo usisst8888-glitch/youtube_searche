@@ -16,6 +16,7 @@ create table if not exists story_angles (
   embedding vector(768),
   status text not null default 'idea',
     -- idea / producing / done / skipped
+  user_code text,                       -- 팀원 분리용
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -32,6 +33,8 @@ create index if not exists story_angles_status_idx
   on story_angles (status);
 create index if not exists story_angles_created_idx
   on story_angles (created_at desc);
+create index if not exists story_angles_user_code_idx
+  on story_angles (user_code);
 
 -- 5. updated_at 자동 갱신 트리거
 create or replace function set_updated_at()
@@ -50,7 +53,8 @@ create trigger story_angles_updated_at
 create or replace function match_story_angles(
   query_embedding vector(768),
   match_threshold float default 0.85,
-  match_count int default 5
+  match_count int default 5,
+  user_code_filter text default null
 )
 returns table (
   id uuid,
@@ -65,6 +69,7 @@ returns table (
     1 - (embedding <=> query_embedding) as similarity
   from story_angles
   where 1 - (embedding <=> query_embedding) > match_threshold
+    and (user_code_filter is null or user_code = user_code_filter)
   order by embedding <=> query_embedding
   limit match_count;
 $$;

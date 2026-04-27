@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useProject } from "../context";
+import { authFetch } from "@/lib/auth-fetch";
 
 type StoryAngle = {
   id: string;
@@ -72,7 +73,7 @@ export default function CreateResearchPage() {
       params.set("category", filterCategory);
       if (search.trim()) params.set("q", search.trim());
       params.set("limit", "100");
-      const res = await fetch(`/api/story-library?${params}`);
+      const res = await authFetch(`/api/story-library?${params}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "라이브러리 로드 실패");
       setLibrary(data);
@@ -92,7 +93,7 @@ export default function CreateResearchPage() {
     setDiscoverStatus("Gemini에 ${count * 1.6}개 후보 요청 중...");
     setDiscovering(true);
     try {
-      const res = await fetch("/api/discover-story-angles", {
+      const res = await authFetch("/api/discover-story-angles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ category, count }),
@@ -116,7 +117,7 @@ export default function CreateResearchPage() {
     status: StoryAngle["status"],
   ) => {
     try {
-      await fetch("/api/story-library", {
+      await authFetch("/api/story-library", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, status }),
@@ -130,7 +131,7 @@ export default function CreateResearchPage() {
   const handleDelete = async (id: string) => {
     if (!confirm("이 앵글을 삭제할까요?")) return;
     try {
-      await fetch("/api/story-library", {
+      await authFetch("/api/story-library", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),

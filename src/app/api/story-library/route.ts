@@ -1,13 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServer, hasSupabase } from "@/lib/supabase";
+import { getCodeFromRequest, isValidCode } from "@/lib/auth";
 
 export const runtime = "nodejs";
+
+function requireCode(req: NextRequest): string | null {
+  const code = getCodeFromRequest(req);
+  return isValidCode(code) ? code : null;
+}
 
 export async function GET(req: NextRequest) {
   if (!hasSupabase()) {
     return NextResponse.json(
       { error: "Supabase가 설정되지 않았습니다." },
       { status: 500 },
+    );
+  }
+  const userCode = requireCode(req);
+  if (!userCode) {
+    return NextResponse.json(
+      { error: "팀원 접근 코드가 필요합니다." },
+      { status: 401 },
     );
   }
   try {
@@ -25,6 +38,7 @@ export async function GET(req: NextRequest) {
         "id, product_name, product_category, angle, hook, fact, sources, status, created_at",
         { count: "exact" },
       )
+      .eq("user_code", userCode)
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -41,10 +55,11 @@ export async function GET(req: NextRequest) {
     const { data, error, count } = await query;
     if (error) throw error;
 
-    // 상태별 카운트 (탭 뱃지용)
+    // 상태별 카운트 (탭 뱃지용) — user_code 기준
     const { data: stats } = await supa
       .from("story_angles")
-      .select("status");
+      .select("status")
+      .eq("user_code", userCode);
     const counts = {
       all: stats?.length || 0,
       idea: 0,
@@ -71,6 +86,13 @@ export async function PATCH(req: NextRequest) {
       { status: 500 },
     );
   }
+  const userCode = requireCode(req);
+  if (!userCode) {
+    return NextResponse.json(
+      { error: "팀원 접근 코드가 필요합니다." },
+      { status: 401 },
+    );
+  }
   try {
     const { id, status } = await req.json();
     if (!id || !status) {
@@ -90,7 +112,8 @@ export async function PATCH(req: NextRequest) {
     const { error } = await supa
       .from("story_angles")
       .update({ status })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("user_code", userCode);
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch (e) {
@@ -106,13 +129,24 @@ export async function DELETE(req: NextRequest) {
       { status: 500 },
     );
   }
+  const userCode = requireCode(req);
+  if (!userCode) {
+    return NextResponse.json(
+      { error: "팀원 접근 코드가 필요합니다." },
+      { status: 401 },
+    );
+  }
   try {
     const { id } = await req.json();
     if (!id) {
       return NextResponse.json({ error: "id가 필요합니다." }, { status: 400 });
     }
     const supa = getSupabaseServer();
-    const { error } = await supa.from("story_angles").delete().eq("id", id);
+    const { error } = await supa
+      .from("story_angles")
+      .delete()
+      .eq("id", id)
+      .eq("user_code", userCode);
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch (e) {

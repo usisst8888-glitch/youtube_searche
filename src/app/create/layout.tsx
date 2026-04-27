@@ -4,6 +4,7 @@ import { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ProjectProvider } from "./context";
+import { AuthGate } from "./auth-gate";
 
 const STEPS = [
   { href: "/create/research", label: "0. 제품 리서치" },
@@ -27,29 +28,31 @@ export default function CreateLayout({ children }: { children: ReactNode }) {
           </p>
         </div>
 
-        <nav className="mb-6 overflow-x-auto">
-          <ol className="flex gap-2 min-w-max">
-            {STEPS.map((step) => {
-              const active = pathname === step.href;
-              return (
-                <li key={step.href}>
-                  <Link
-                    href={step.href}
-                    className={`block px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap ${
-                      active
-                        ? "bg-red-500 text-white"
-                        : "bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:border-red-300 dark:hover:border-red-700"
-                    }`}
-                  >
-                    {step.label}
-                  </Link>
-                </li>
-              );
-            })}
-          </ol>
-        </nav>
+        <AuthGate>
+          <nav className="mb-6 overflow-x-auto">
+            <ol className="flex gap-2 min-w-max">
+              {STEPS.map((step) => {
+                const active = pathname === step.href;
+                return (
+                  <li key={step.href}>
+                    <Link
+                      href={step.href}
+                      className={`block px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap ${
+                        active
+                          ? "bg-red-500 text-white"
+                          : "bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:border-red-300 dark:hover:border-red-700"
+                      }`}
+                    >
+                      {step.label}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ol>
+          </nav>
 
-        <div>{children}</div>
+          <div>{children}</div>
+        </AuthGate>
       </div>
     </ProjectProvider>
   );

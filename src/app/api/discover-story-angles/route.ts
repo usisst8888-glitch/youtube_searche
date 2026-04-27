@@ -6,6 +6,7 @@ import {
   embedTexts,
 } from "@/lib/gemini";
 import { getSupabaseServer, hasSupabase } from "@/lib/supabase";
+import { getCodeFromRequest, isValidCode } from "@/lib/auth";
 
 export const maxDuration = 180;
 export const runtime = "nodejs";
@@ -118,6 +119,14 @@ JSON. angles 배열에 ${count}개.
 
 export async function POST(req: NextRequest) {
   try {
+    const userCode = getCodeFromRequest(req);
+    if (!isValidCode(userCode)) {
+      return NextResponse.json(
+        { error: "팀원 접근 코드가 필요합니다." },
+        { status: 401 },
+      );
+    }
+
     const {
       category = "전체",
       count = 20,
@@ -146,11 +155,11 @@ export async function POST(req: NextRequest) {
 
     const supa = getSupabaseServer();
 
-    // 1) 최근 저장된 앵글 일부 가져와서 Gemini에 "제외 리스트"로 전달
-    //    (프롬프트 힌트용. 실제 dedup은 임베딩 유사도로 정확히 함)
+    // 1) 본인 user_code의 최근 앵글만 가져와서 Gemini에 "제외 리스트"로 전달
     const { data: recent } = await supa
       .from("story_angles")
       .select("product_name, angle")
+      .eq("user_code", userCode)
       .order("created_at", { ascending: false })
       .limit(50);
 
@@ -227,6 +236,7 @@ export async function POST(req: NextRequest) {
           query_embedding: emb,
           match_threshold: similarityThreshold,
           match_count: 1,
+          user_code_filter: userCode,
         },
       );
       if (rpcErr) {
@@ -253,7 +263,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 5) DB에 insert
+    // 5) DB에 insert (user_code 포함)
     const rowsToInsert = unique.map((u) => ({
       product_name: u.productName,
       product_category: u.productCategory || category,
@@ -263,6 +273,7 @@ export async function POST(req: NextRequest) {
       sources: u.sources || [],
       embedding: u.embedding,
       status: "idea" as const,
+      user_code: userCode,
     }));
 
     const { data: inserted, error: insErr } = await supa
