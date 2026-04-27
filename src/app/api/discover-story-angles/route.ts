@@ -175,9 +175,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const requested = Math.min(50, Math.max(3, Number(count)));
-    // 여유분 포함해서 더 많이 요청 → dedup 후 requested개 맞추기
-    const askCount = Math.min(60, Math.round(requested * 1.6));
+    const requested = Math.min(50, Math.max(1, Number(count)));
+    // 카테고리 필터 + 중복 제거로 깎이는 것 감안해 4배+15개 최소 확보
+    const askCount = Math.min(60, Math.max(15, requested * 4));
 
     const supa = getSupabaseServer();
 
@@ -355,8 +355,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       generated: unique.length,
       requested,
-      duplicatesSkipped: duplicates.length,
+      geminiReturned: candidates.length,
       categoryDropped: droppedByCategory,
+      duplicatesSkipped: duplicates.length,
       items: inserted || [],
     });
   } catch (e) {

@@ -100,9 +100,15 @@ export default function CreateResearchPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "발굴 실패");
-      setDiscoverStatus(
-        `✅ ${data.generated}개 신규 저장 (중복 ${data.duplicatesSkipped}개 스킵)`,
-      );
+      const parts = [
+        `✅ ${data.generated}개 신규 저장`,
+        data.geminiReturned !== undefined &&
+          `(Gemini ${data.geminiReturned}개 후보 →`,
+        data.categoryDropped !== undefined &&
+          `카테고리 외 ${data.categoryDropped}개 제외`,
+        `→ 중복 ${data.duplicatesSkipped}개 제외)`,
+      ].filter(Boolean);
+      setDiscoverStatus(parts.join(" "));
       await loadLibrary();
     } catch (e) {
       setError(e instanceof Error ? e.message : "오류");
