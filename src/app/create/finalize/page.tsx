@@ -1,25 +1,99 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import { useProject, WebSceneAsset } from "../context";
 import { authFetch } from "@/lib/auth-fetch";
 
-// 기본 쇼츠 템플릿 상수
+// 기본 쇼츠 템플릿 (3:7)
 const TEMPLATE = {
   width: 720,
   height: 1280,
+  topRatio: 0.3,
   fps: 30,
   bgmVolume: 0.15,
   ttsVolume: 1.0,
 };
+const TOP_HEIGHT = Math.round(TEMPLATE.height * TEMPLATE.topRatio); // 384
+const BOTTOM_HEIGHT = TEMPLATE.height - TOP_HEIGHT; // 896
 
 function assetToImageUrl(a: WebSceneAsset): string {
   if (a.kind === "youtube-short") return a.thumbnail;
   if (a.kind === "web-image") return a.imageUrl;
   return a.coverUrl;
+}
+
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string[] {
+  const words = text.split(" ");
+  const lines: string[] = [];
+  let line = "";
+  for (const word of words) {
+    const test = line ? line + " " + word : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  // 한국어는 단어 분리가 안 되는 경우 많아서 글자 단위 fallback
+  if (lines.length === 1 && ctx.measureText(text).width > maxWidth) {
+    const chars: string[] = [];
+    let cur = "";
+    for (const ch of text) {
+      const t = cur + ch;
+      if (ctx.measureText(t).width > maxWidth && cur) {
+        chars.push(cur);
+        cur = ch;
+      } else {
+        cur = t;
+      }
+    }
+    if (cur) chars.push(cur);
+    return chars;
+  }
+  return lines;
+}
+
+async function renderTitleBarPng(args: {
+  width: number;
+  height: number;
+  text: string;
+  bgColor: string;
+  textColor: string;
+  fontSize: number;
+}): Promise<Uint8Array> {
+  const canvas = document.createElement("canvas");
+  canvas.width = args.width;
+  canvas.height = args.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas 2d 컨텍스트 없음");
+  ctx.fillStyle = args.bgColor;
+  ctx.fillRect(0, 0, args.width, args.height);
+  ctx.fillStyle = args.textColor;
+  ctx.font = `900 ${args.fontSize}px "Apple SD Gothic Neo", "Noto Sans KR", "Pretendard", sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const padding = 40;
+  const lines = wrapText(ctx, args.text, args.width - padding * 2);
+  const lineHeight = args.fontSize * 1.25;
+  const startY = args.height / 2 - ((lines.length - 1) * lineHeight) / 2;
+  lines.forEach((line, i) => {
+    ctx.fillText(line, args.width / 2, startY + i * lineHeight);
+  });
+  const blob = await new Promise<Blob | null>((res) =>
+    canvas.toBlob(res, "image/png"),
+  );
+  if (!blob) throw new Error("PNG blob 생성 실패");
+  const buf = await blob.arrayBuffer();
+  return new Uint8Array(buf);
 }
 
 export default function FinalizePage() {
@@ -36,6 +110,12 @@ export default function FinalizePage() {
     setFinalVideoUrl,
   } = useProject();
 
+  // 템플릿 설정
+  const [bgColor, setBgColor] = useState("#FFE600");
+  const [textColor, setTextColor] = useState("#000000");
+  const [fontSize, setFontSize] = useState(72);
+  const [sceneTitles, setSceneTitles] = useState<Record<number, string>>({});
+
   const [ttsLoading, setTtsLoading] = useState(false);
   const [bgmLoading, setBgmLoading] = useState(false);
   const [bgmPrompt, setBgmPrompt] = useState("");
@@ -43,6 +123,8 @@ export default function FinalizePage() {
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
 
+  // 미리보기
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const ffmpegRef = useRef<FFmpeg | null>(null);
 
   const allReady =
@@ -57,12 +139,50 @@ export default function FinalizePage() {
     0,
   );
 
-  const suggestedBgmPrompt = (() => {
-    if (generatedScenes.length === 0)
-      return "soft cinematic instrumental background, emotional, modern Korean short-form video BGM";
-    const moods = generatedScenes.map((s) => s.emotion).join(" → ");
-    return `${totalDuration}-second instrumental, mood arc: ${moods}. Warm, modern, Korean short-form video background music. No vocals.`;
-  })();
+  const titleForScene = (idx: number): string => {
+    if (sceneTitles[idx] !== undefined) return sceneTitles[idx];
+    const text = generatedScenes[idx]?.text || "";
+    // 짧게: 첫 문장 또는 30자
+    const firstSentence = text.split(/[.!?]/)[0] || text;
+    return firstSentence.slice(0, 32);
+  };
+
+  // 라이브 미리보기 (씬 1)
+  useEffect(() => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas || generatedScenes.length === 0) return;
+    canvas.width = 360;
+    canvas.height = 640;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    // 배경 (전체)
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fillRect(0, 0, 360, 640);
+    // 상단 영역 (30%)
+    const topH = Math.round(640 * TEMPLATE.topRatio);
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, 360, topH);
+    // 텍스트
+    ctx.fillStyle = textColor;
+    const previewFontSize = Math.round(fontSize * 0.5);
+    ctx.font = `900 ${previewFontSize}px "Apple SD Gothic Neo", "Noto Sans KR", sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const padding = 20;
+    const lines = wrapText(ctx, titleForScene(0), 360 - padding * 2);
+    const lineHeight = previewFontSize * 1.25;
+    const startY = topH / 2 - ((lines.length - 1) * lineHeight) / 2;
+    lines.forEach((line, i) => {
+      ctx.fillText(line, 360 / 2, startY + i * lineHeight);
+    });
+    // 하단 영역 placeholder
+    ctx.fillStyle = "#333";
+    ctx.fillRect(0, topH, 360, 640 - topH);
+    ctx.fillStyle = "#888";
+    ctx.font = "16px sans-serif";
+    ctx.fillText("[ 영상/이미지 영역 ]", 180, topH + (640 - topH) / 2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bgColor, textColor, fontSize, sceneTitles, generatedScenes]);
 
   const handleTts = async () => {
     setError("");
@@ -82,6 +202,13 @@ export default function FinalizePage() {
       setTtsLoading(false);
     }
   };
+
+  const suggestedBgmPrompt = (() => {
+    if (generatedScenes.length === 0)
+      return "soft cinematic instrumental background, emotional, modern Korean short-form video BGM";
+    const moods = generatedScenes.map((s) => s.emotion).join(" → ");
+    return `${totalDuration}-second instrumental, mood arc: ${moods}. Warm, modern, Korean short-form video background music. No vocals.`;
+  })();
 
   const handleBgm = async () => {
     setError("");
@@ -124,14 +251,12 @@ export default function FinalizePage() {
   };
 
   const downloadAndProxy = async (url: string): Promise<Uint8Array> => {
-    // 외부 이미지 CORS 우회: 서버 프록시 통해 다운로드
     try {
       const res = await fetch(`/api/proxy-asset?url=${encodeURIComponent(url)}`);
       if (!res.ok) throw new Error("proxy fetch failed");
       const buf = await res.arrayBuffer();
       return new Uint8Array(buf);
     } catch {
-      // fallback 직접 fetch (CORS 허용된 경우)
       const data = await fetchFile(url);
       return data instanceof Uint8Array ? data : new Uint8Array(data);
     }
@@ -145,35 +270,47 @@ export default function FinalizePage() {
     try {
       const ffmpeg = await ensureFfmpeg();
 
-      // 1. 각 씬: 선택한 첫 번째 소재 → 정사이즈 10초 클립으로 정규화
-      const clipNames: string[] = [];
+      const sceneClips: string[] = [];
+
       for (let i = 0; i < generatedScenes.length; i++) {
         const scene = generatedScenes[i];
         const assets = selectedSceneAssets[scene.index] || [];
-        if (assets.length === 0) {
-          throw new Error(`씬 ${scene.index + 1} 에 소재가 없습니다.`);
-        }
+        if (assets.length === 0)
+          throw new Error(`씬 ${scene.index + 1}에 소재 없음`);
+
         const dur = scene.durationSec || 10;
         const perAsset = Math.max(1, Math.floor(dur / assets.length));
-        // 멀티-소재일 경우 N개를 분할해서 사용
 
+        // 1) 상단 타이틀 바 PNG (Canvas)
+        setProgress(`씬 ${i + 1}/${generatedScenes.length} · 타이틀 렌더`);
+        const titlePng = await renderTitleBarPng({
+          width: TEMPLATE.width,
+          height: TOP_HEIGHT,
+          text: titleForScene(scene.index),
+          bgColor,
+          textColor,
+          fontSize,
+        });
+        await ffmpeg.writeFile(`title_${i}.png`, titlePng);
+
+        // 2) 하단 영역 — 각 소재를 720x896 클립으로 정규화 후 concat
+        const bottomClips: string[] = [];
         for (let j = 0; j < assets.length; j++) {
           const a = assets[j];
           const url = assetToImageUrl(a);
           if (!url) continue;
 
           setProgress(
-            `씬 ${i + 1}/${generatedScenes.length} · 소재 ${j + 1}/${assets.length} 다운로드`,
+            `씬 ${i + 1} · 소재 ${j + 1}/${assets.length} 다운로드`,
           );
           const bytes = await downloadAndProxy(url);
-
-          const ext = url.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i)?.[1]?.toLowerCase() || "jpg";
+          const ext =
+            url.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i)?.[1]?.toLowerCase() ||
+            "jpg";
           const inName = `s${i}_${j}.${ext}`;
-          const outName = `c${i}_${j}.mp4`;
+          const bottomName = `b${i}_${j}.mp4`;
           await ffmpeg.writeFile(inName, bytes);
 
-          setProgress(`씬 ${i + 1} 클립화...`);
-          // 이미지 → 슬로 줌 (Ken Burns) + 9:16 크롭
           await ffmpeg.exec([
             "-y",
             "-loop",
@@ -185,7 +322,7 @@ export default function FinalizePage() {
             "-t",
             String(perAsset),
             "-vf",
-            `scale=${TEMPLATE.width * 1.1}:${TEMPLATE.height * 1.1}:force_original_aspect_ratio=increase,crop=${TEMPLATE.width}:${TEMPLATE.height},zoompan=z='min(zoom+0.0008,1.15)':d=${perAsset * TEMPLATE.fps}:s=${TEMPLATE.width}x${TEMPLATE.height}:fps=${TEMPLATE.fps}`,
+            `scale=${Math.round(TEMPLATE.width * 1.1)}:${Math.round(BOTTOM_HEIGHT * 1.1)}:force_original_aspect_ratio=increase,crop=${TEMPLATE.width}:${BOTTOM_HEIGHT},zoompan=z='min(zoom+0.0008,1.15)':d=${perAsset * TEMPLATE.fps}:s=${TEMPLATE.width}x${BOTTOM_HEIGHT}:fps=${TEMPLATE.fps}`,
             "-c:v",
             "libx264",
             "-preset",
@@ -193,20 +330,91 @@ export default function FinalizePage() {
             "-pix_fmt",
             "yuv420p",
             "-an",
-            outName,
+            bottomName,
           ]);
-          clipNames.push(outName);
+          bottomClips.push(bottomName);
         }
+
+        // 하단 클립 concat
+        const bottomConcat = `bottom_${i}.mp4`;
+        if (bottomClips.length === 1) {
+          await ffmpeg.exec([
+            "-y",
+            "-i",
+            bottomClips[0],
+            "-c",
+            "copy",
+            bottomConcat,
+          ]);
+        } else {
+          const list = bottomClips.map((n) => `file '${n}'`).join("\n");
+          await ffmpeg.writeFile(`blist_${i}.txt`, list);
+          await ffmpeg.exec([
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            `blist_${i}.txt`,
+            "-c",
+            "copy",
+            bottomConcat,
+          ]);
+        }
+
+        // 3) 타이틀 PNG → 비디오 클립 (씬 전체 길이)
+        const titleClip = `title_${i}.mp4`;
+        await ffmpeg.exec([
+          "-y",
+          "-loop",
+          "1",
+          "-framerate",
+          String(TEMPLATE.fps),
+          "-i",
+          `title_${i}.png`,
+          "-t",
+          String(dur),
+          "-vf",
+          `scale=${TEMPLATE.width}:${TOP_HEIGHT},fps=${TEMPLATE.fps}`,
+          "-c:v",
+          "libx264",
+          "-preset",
+          "ultrafast",
+          "-pix_fmt",
+          "yuv420p",
+          "-an",
+          titleClip,
+        ]);
+
+        // 4) vstack: 타이틀(상단) + 소재(하단)
+        setProgress(`씬 ${i + 1} · 합치기`);
+        const sceneOut = `scene_${i}.mp4`;
+        await ffmpeg.exec([
+          "-y",
+          "-i",
+          titleClip,
+          "-i",
+          bottomConcat,
+          "-filter_complex",
+          "[0:v][1:v]vstack=inputs=2[v]",
+          "-map",
+          "[v]",
+          "-c:v",
+          "libx264",
+          "-preset",
+          "ultrafast",
+          "-pix_fmt",
+          "yuv420p",
+          sceneOut,
+        ]);
+        sceneClips.push(sceneOut);
       }
 
-      if (clipNames.length === 0) {
-        throw new Error("생성된 클립이 없습니다.");
-      }
-
-      // 2. 클립 이어붙이기
-      setProgress("클립 이어붙이는 중...");
-      const list = clipNames.map((n) => `file '${n}'`).join("\n");
-      await ffmpeg.writeFile("list.txt", list);
+      // 5) 모든 씬 concat
+      setProgress("전체 씬 이어붙이는 중...");
+      const list = sceneClips.map((n) => `file '${n}'`).join("\n");
+      await ffmpeg.writeFile("scenes.txt", list);
       await ffmpeg.exec([
         "-y",
         "-f",
@@ -214,7 +422,7 @@ export default function FinalizePage() {
         "-safe",
         "0",
         "-i",
-        "list.txt",
+        "scenes.txt",
         "-c",
         "copy",
         "concat.mp4",
@@ -222,31 +430,32 @@ export default function FinalizePage() {
 
       let videoSrc = "concat.mp4";
 
-      // 3. 오디오 합성 (TTS + BGM)
+      // 6) 오디오 mix
       const hasTts = !!ttsAudioUrl;
       const hasBgm = !!bgmAudioUrl;
-
       if (hasTts || hasBgm) {
         setProgress("오디오 합성 중...");
         const inputs: string[] = ["-i", videoSrc];
         const filters: string[] = [];
         let inputIdx = 1;
-
         if (hasTts) {
-          const ttsBytes = await downloadAndProxy(ttsAudioUrl!);
-          await ffmpeg.writeFile("tts.mp3", ttsBytes);
+          await ffmpeg.writeFile(
+            "tts.mp3",
+            await downloadAndProxy(ttsAudioUrl!),
+          );
           inputs.push("-i", "tts.mp3");
           filters.push(`[${inputIdx}:a]volume=${TEMPLATE.ttsVolume}[aTts]`);
           inputIdx++;
         }
         if (hasBgm) {
-          const bgmBytes = await downloadAndProxy(bgmAudioUrl!);
-          await ffmpeg.writeFile("bgm.mp3", bgmBytes);
+          await ffmpeg.writeFile(
+            "bgm.mp3",
+            await downloadAndProxy(bgmAudioUrl!),
+          );
           inputs.push("-i", "bgm.mp3");
           filters.push(`[${inputIdx}:a]volume=${TEMPLATE.bgmVolume}[aBgm]`);
           inputIdx++;
         }
-
         let mixLabel = "";
         if (hasTts && hasBgm) {
           filters.push(
@@ -258,7 +467,6 @@ export default function FinalizePage() {
         } else {
           mixLabel = "[aBgm]";
         }
-
         await ffmpeg.exec([
           ...inputs,
           "-filter_complex",
@@ -277,7 +485,7 @@ export default function FinalizePage() {
         videoSrc = "final.mp4";
       }
 
-      setProgress("MP4 생성 완료, blob URL 생성 중...");
+      setProgress("MP4 마무리...");
       const data = await ffmpeg.readFile(videoSrc);
       const bytes =
         data instanceof Uint8Array
@@ -321,16 +529,122 @@ export default function FinalizePage() {
           </div>
           <div>주제: {storyTopic || "—"}</div>
           <div>
-            씬 {generatedScenes.length}개 · 총 {totalDuration}초 (9:16, {TEMPLATE.fps}fps,{" "}
-            {TEMPLATE.width}×{TEMPLATE.height})
+            씬 {generatedScenes.length}개 · 총 {totalDuration}초 ({TEMPLATE.width}×
+            {TEMPLATE.height}, {TEMPLATE.fps}fps)
           </div>
+        </div>
+      </section>
+
+      {/* 템플릿 에디터 */}
+      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+        <h2 className="font-semibold mb-3">🎨 템플릿 (상단 30% / 하단 70%)</h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* 미리보기 */}
           <div>
-            소재 합계{" "}
-            {generatedScenes.reduce(
-              (sum, s) => sum + (selectedSceneAssets[s.index] || []).length,
-              0,
-            )}
-            개
+            <div className="text-xs text-zinc-500 mb-1">씬 1 미리보기</div>
+            <canvas
+              ref={previewCanvasRef}
+              className="w-full max-w-[180px] aspect-[9/16] rounded border border-zinc-200 dark:border-zinc-800 bg-black"
+            />
+          </div>
+
+          {/* 컨트롤 */}
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium mb-1">
+                상단 배경색
+              </label>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="color"
+                  value={bgColor}
+                  onChange={(e) => setBgColor(e.target.value)}
+                  className="w-10 h-10 rounded cursor-pointer border border-zinc-300 dark:border-zinc-700"
+                />
+                <input
+                  type="text"
+                  value={bgColor}
+                  onChange={(e) => setBgColor(e.target.value)}
+                  className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded px-2 py-1 text-xs font-mono"
+                />
+                <div className="flex gap-1">
+                  {["#FFE600", "#FF3B30", "#000000", "#FFFFFF", "#0070F3"].map(
+                    (c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setBgColor(c)}
+                        className="w-6 h-6 rounded border border-zinc-300 dark:border-zinc-700"
+                        style={{ background: c }}
+                        title={c}
+                      />
+                    ),
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium mb-1">텍스트 색</label>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="color"
+                  value={textColor}
+                  onChange={(e) => setTextColor(e.target.value)}
+                  className="w-10 h-10 rounded cursor-pointer border border-zinc-300 dark:border-zinc-700"
+                />
+                <input
+                  type="text"
+                  value={textColor}
+                  onChange={(e) => setTextColor(e.target.value)}
+                  className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded px-2 py-1 text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium mb-1">
+                폰트 크기: {fontSize}px
+              </label>
+              <input
+                type="range"
+                min={40}
+                max={120}
+                step={4}
+                value={fontSize}
+                onChange={(e) => setFontSize(parseInt(e.target.value, 10))}
+                className="w-full accent-red-500"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* 씬별 텍스트 편집 */}
+        <div className="mt-4 border-t border-zinc-200 dark:border-zinc-800 pt-3">
+          <div className="text-xs text-zinc-500 mb-2">
+            각 씬의 상단 텍스트 (비우면 해당 씬 대본 첫 문장 사용)
+          </div>
+          <div className="space-y-2">
+            {generatedScenes.map((s) => (
+              <div key={s.index} className="flex gap-2 items-start">
+                <span className="text-xs text-zinc-500 mt-1.5 shrink-0">
+                  씬 {s.index + 1}
+                </span>
+                <input
+                  type="text"
+                  value={sceneTitles[s.index] ?? titleForScene(s.index)}
+                  onChange={(e) =>
+                    setSceneTitles((prev) => ({
+                      ...prev,
+                      [s.index]: e.target.value,
+                    }))
+                  }
+                  placeholder={titleForScene(s.index)}
+                  className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded px-2 py-1 text-xs"
+                />
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -376,9 +690,8 @@ export default function FinalizePage() {
       <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
         <h2 className="font-semibold mb-2">🎬 최종 합성</h2>
         <p className="text-xs text-zinc-500 mb-3">
-          선택된 소재를 기본 쇼츠 템플릿(9:16, {TEMPLATE.fps}fps, 씬당 10초,
-          slow zoom)으로 클립화 → 이어붙이기 → 오디오 mix → MP4. 브라우저 안에서
-          FFmpeg.wasm 처리.
+          템플릿 (상단 30% 색상+텍스트 / 하단 70% 영상·이미지) 적용 →
+          씬 이어붙이기 → TTS·BGM mix → MP4. 브라우저 안에서 처리.
         </p>
         <button
           onClick={handleCompose}
