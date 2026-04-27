@@ -6,6 +6,12 @@ import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import { useProject, WebSceneAsset } from "../context";
 import { authFetch } from "@/lib/auth-fetch";
+import {
+  getCachedAsset,
+  setCachedAsset,
+  clearAssetCache,
+  getCacheStats,
+} from "@/lib/asset-cache";
 
 // 기본 쇼츠 템플릿 (3:7 default — 비율은 UI에서 조절)
 const TEMPLATE = {
@@ -142,6 +148,68 @@ export default function FinalizePage() {
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const ffmpegRef = useRef<FFmpeg | null>(null);
 
+  // 씬 순서 및 씬별 길이 (편집)
+  const [sceneOrder, setSceneOrder] = useState<number[]>([]);
+  const [sceneDurations, setSceneDurations] = useState<Record<number, number>>(
+    {},
+  );
+
+  // 씬 데이터 변경 시 순서/길이 초기화
+  useEffect(() => {
+    if (generatedScenes.length === 0) return;
+    setSceneOrder((prev) => {
+      const fresh = generatedScenes.map((s) => s.index);
+      // 이미 동일하면 유지
+      if (
+        prev.length === fresh.length &&
+        prev.every((v, i) => v === fresh[i])
+      ) {
+        return prev;
+      }
+      return fresh;
+    });
+    setSceneDurations((prev) => {
+      const next: Record<number, number> = { ...prev };
+      for (const s of generatedScenes) {
+        if (next[s.index] === undefined) next[s.index] = s.durationSec || 10;
+      }
+      return next;
+    });
+  }, [generatedScenes]);
+
+  // 캐시 통계
+  const [cacheStats, setCacheStats] = useState<{
+    count: number;
+    totalBytes: number;
+  } | null>(null);
+  const refreshCacheStats = async () => {
+    setCacheStats(await getCacheStats());
+  };
+  useEffect(() => {
+    refreshCacheStats();
+  }, []);
+
+  const moveScene = (sceneIdx: number, delta: -1 | 1) => {
+    setSceneOrder((prev) => {
+      const pos = prev.indexOf(sceneIdx);
+      if (pos < 0) return prev;
+      const newPos = pos + delta;
+      if (newPos < 0 || newPos >= prev.length) return prev;
+      const next = [...prev];
+      [next[pos], next[newPos]] = [next[newPos], next[pos]];
+      return next;
+    });
+  };
+
+  const setSceneDuration = (sceneIdx: number, dur: number) => {
+    setSceneDurations((prev) => ({ ...prev, [sceneIdx]: dur }));
+  };
+
+  const totalDurationCustom = sceneOrder.reduce(
+    (sum, idx) => sum + (sceneDurations[idx] || 10),
+    0,
+  );
+
   const allReady =
     generatedScenes.length > 0 &&
     generatedScenes.every(
@@ -149,10 +217,7 @@ export default function FinalizePage() {
     );
 
   const fullScript = generatedScenes.map((s) => s.text).join(" ");
-  const totalDuration = generatedScenes.reduce(
-    (sum, s) => sum + (s.durationSec || 10),
-    0,
-  );
+  const totalDuration = totalDurationCustom || 0;
 
   const headerTextResolved = (headerText || storyTopic || "").trim();
 
@@ -260,15 +325,43 @@ export default function FinalizePage() {
   };
 
   const downloadAndProxy = async (url: string): Promise<Uint8Array> => {
+    // 1) IndexedDB 캐시 확인
+    const cached = await getCachedAsset(url);
+    if (cached) return cached.bytes;
+
+    // 2) 다운로드
+    let bytes: Uint8Array;
+    let ct = "application/octet-stream";
     try {
       const res = await fetch(`/api/proxy-asset?url=${encodeURIComponent(url)}`);
       if (!res.ok) throw new Error("proxy fetch failed");
+      ct = res.headers.get("content-type") || ct;
       const buf = await res.arrayBuffer();
-      return new Uint8Array(buf);
+      bytes = new Uint8Array(buf);
     } catch {
       const data = await fetchFile(url);
-      return data instanceof Uint8Array ? data : new Uint8Array(data);
+      bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
     }
+
+    // 3) 캐시 저장 (best-effort)
+    void setCachedAsset(url, bytes, ct);
+    void refreshCacheStats();
+    return bytes;
+  };
+
+  const downloadVideoCached = async (videoUrl: string): Promise<Uint8Array> => {
+    const cacheKey = `video::${videoUrl}`;
+    const cached = await getCachedAsset(cacheKey);
+    if (cached) return cached.bytes;
+    const res = await fetch(
+      `/api/download-video?url=${encodeURIComponent(videoUrl)}`,
+    );
+    if (!res.ok) throw new Error(`download ${res.status}`);
+    const buf = await res.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    void setCachedAsset(cacheKey, bytes, "video/mp4");
+    void refreshCacheStats();
+    return bytes;
   };
 
   const handleCompose = async () => {
@@ -281,14 +374,20 @@ export default function FinalizePage() {
 
       const sceneClips: string[] = [];
 
-      for (let i = 0; i < generatedScenes.length; i++) {
-        const scene = generatedScenes[i];
+      const orderedScenes = sceneOrder
+        .map((sceneIdx) => generatedScenes.find((s) => s.index === sceneIdx))
+        .filter((s): s is NonNullable<typeof s> => !!s);
+
+      for (let i = 0; i < orderedScenes.length; i++) {
+        const scene = orderedScenes[i];
         const assets = selectedSceneAssets[scene.index] || [];
         if (assets.length === 0)
           throw new Error(`씬 ${scene.index + 1}에 소재 없음`);
 
-        const dur = scene.durationSec || 10;
-        const perAsset = Math.max(1, Math.floor(dur / assets.length));
+        const dur = sceneDurations[scene.index] || scene.durationSec || 10;
+        const perAsset = Math.max(1, Math.floor(dur / Math.max(1, assets.length)));
+        // 이 변수 사용 — i 가 ordered position (file 이름 prefix 용)
+        void i;
 
         // 1) 상단 타이틀 바 PNG (Canvas)
         setProgress(`씬 ${i + 1}/${generatedScenes.length} · 타이틀 렌더`);
@@ -312,18 +411,14 @@ export default function FinalizePage() {
           const bottomName = `b${i}_${j}.mp4`;
 
           if (videoUrl) {
-            // 영상 다운로드 시도
+            // 영상 다운로드 시도 (캐시 우선)
             setProgress(
-              `씬 ${i + 1} · 영상 ${j + 1}/${assets.length} 다운로드 중...`,
+              `씬 ${i + 1} · 영상 ${j + 1}/${assets.length} 로드`,
             );
             try {
-              const res = await fetch(
-                `/api/download-video?url=${encodeURIComponent(videoUrl)}`,
-              );
-              if (!res.ok) throw new Error(`download ${res.status}`);
-              const buf = await res.arrayBuffer();
+              const buf = await downloadVideoCached(videoUrl);
               const inName = `vs${i}_${j}.mp4`;
-              await ffmpeg.writeFile(inName, new Uint8Array(buf));
+              await ffmpeg.writeFile(inName, buf);
 
               setProgress(`씬 ${i + 1} · 영상 ${j + 1} 클립화...`);
               await ffmpeg.exec([
@@ -768,6 +863,135 @@ export default function FinalizePage() {
         {bgmAudioUrl && (
           <audio controls src={bgmAudioUrl} className="mt-3 w-full" />
         )}
+      </section>
+
+      {/* 씬 편집 — 순서/길이 */}
+      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+        <h2 className="font-semibold mb-2">🎞 영상 편집</h2>
+        <p className="text-xs text-zinc-500 mb-3">
+          씬 순서를 바꾸거나 각 씬의 길이를 조정. 합성 시 이 설정대로 적용.
+        </p>
+        <ul className="space-y-2">
+          {sceneOrder.map((sceneIdx, pos) => {
+            const scene = generatedScenes.find((s) => s.index === sceneIdx);
+            if (!scene) return null;
+            const dur = sceneDurations[sceneIdx] || 10;
+            const assets = selectedSceneAssets[sceneIdx] || [];
+            const firstAsset = assets[0];
+            const thumb = firstAsset
+              ? assetToImageUrl(firstAsset)
+              : "";
+            return (
+              <li
+                key={sceneIdx}
+                className="flex gap-3 items-start border border-zinc-200 dark:border-zinc-800 rounded-lg p-2"
+              >
+                {thumb ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={thumb}
+                    alt=""
+                    className="w-12 h-20 object-cover rounded shrink-0 bg-zinc-100 dark:bg-zinc-800"
+                  />
+                ) : (
+                  <div className="w-12 h-20 bg-zinc-100 dark:bg-zinc-800 rounded shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="font-bold">{pos + 1}.</span>
+                    <span className="text-zinc-500">
+                      원본 씬 {sceneIdx + 1}
+                    </span>
+                    <span className="text-zinc-400">·</span>
+                    <span className="text-red-500">{scene.emotion}</span>
+                    <span className="text-zinc-400">·</span>
+                    <span className="text-zinc-500">소재 {assets.length}개</span>
+                  </div>
+                  <p className="text-xs text-zinc-700 dark:text-zinc-300 line-clamp-2 mt-0.5">
+                    {scene.text}
+                  </p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={3}
+                      max={20}
+                      step={1}
+                      value={dur}
+                      onChange={(e) =>
+                        setSceneDuration(sceneIdx, parseInt(e.target.value, 10))
+                      }
+                      className="flex-1 accent-red-500"
+                    />
+                    <span className="text-xs font-mono w-10 text-right">
+                      {dur}초
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => moveScene(sceneIdx, -1)}
+                    disabled={pos === 0}
+                    className="text-xs px-2 py-0.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-40 rounded"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveScene(sceneIdx, 1)}
+                    disabled={pos === sceneOrder.length - 1}
+                    className="text-xs px-2 py-0.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-40 rounded"
+                  >
+                    ↓
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="mt-3 text-xs text-zinc-500">
+          예상 총 길이: <b>{totalDurationCustom}초</b>
+        </div>
+      </section>
+
+      {/* 로컬 미디어 캐시 */}
+      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="font-semibold">💾 로컬 미디어 캐시</h2>
+            <p className="text-xs text-zinc-500 mt-1">
+              {cacheStats
+                ? `${cacheStats.count}개 항목 · ${(
+                    cacheStats.totalBytes /
+                    1024 /
+                    1024
+                  ).toFixed(1)} MB`
+                : "확인 중..."}{" "}
+              · 다운로드한 영상·이미지·오디오는 브라우저(IndexedDB)에 저장되어
+              재합성 시 재사용됩니다.
+            </p>
+          </div>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={refreshCacheStats}
+              className="text-xs bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 px-2 py-1 rounded"
+            >
+              새로고침
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!confirm("로컬 캐시를 모두 삭제할까요?")) return;
+                await clearAssetCache();
+                await refreshCacheStats();
+              }}
+              className="text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 px-2 py-1 rounded"
+            >
+              비우기
+            </button>
+          </div>
+        </div>
       </section>
 
       <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
