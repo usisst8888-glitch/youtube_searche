@@ -186,6 +186,53 @@ async function searchYoutubeShorts(
   }
 }
 
+async function isValidImageUrl(url: string): Promise<boolean> {
+  if (!url || !/^https?:\/\//.test(url)) return false;
+  try {
+    // HEAD 시도
+    let res = await fetch(url, {
+      method: "HEAD",
+      headers: { "User-Agent": UA, Accept: "image/*" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(5000),
+    });
+    // HEAD가 405/403이면 GET range로 재시도
+    if (res.status === 405 || res.status === 403) {
+      res = await fetch(url, {
+        method: "GET",
+        headers: {
+          "User-Agent": UA,
+          Accept: "image/*",
+          Range: "bytes=0-1023",
+        },
+        redirect: "follow",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.body) {
+        try {
+          await res.body.cancel();
+        } catch {}
+      }
+    }
+    if (!res.ok && res.status !== 206) return false;
+    const ct = res.headers.get("content-type") || "";
+    return ct.toLowerCase().startsWith("image/");
+  } catch {
+    return false;
+  }
+}
+
+async function filterValidImages(
+  assets: SceneAsset[],
+): Promise<SceneAsset[]> {
+  const checks = await pMapLimit(assets, 8, async (a) => {
+    if (a.kind !== "web-image") return { asset: a, ok: true };
+    const ok = await isValidImageUrl(a.imageUrl);
+    return { asset: a, ok };
+  });
+  return checks.filter((c) => c.ok).map((c) => c.asset);
+}
+
 async function googleCseImageSearch(
   query: string,
   limit: number,
@@ -227,9 +274,11 @@ async function findWebImages(
   limit = 3,
 ): Promise<SceneAsset[]> {
   // 1) Google Custom Search (이미지 검색) — 키 있을 때 우선
-  const cseResults = await googleCseImageSearch(query, limit * 2);
-  if (cseResults.length >= limit) {
-    return cseResults.slice(0, limit);
+  //    검증 후에 limit 개수만큼 남도록 여유분 (3배) 가져옴
+  const cseRaw = await googleCseImageSearch(query, limit * 3);
+  const cseValidated = await filterValidImages(cseRaw);
+  if (cseValidated.length >= limit) {
+    return cseValidated.slice(0, limit);
   }
 
   // 2) Fallback: Gemini가 Google 검색 → 페이지 URL → og:image 파싱
@@ -283,17 +332,21 @@ Return 10 page URLs, one per line. Each page must visibly show the subject.`;
     });
 
     const seen = new Set<string>();
-    for (const p of cseResults) seen.add(p.kind === "web-image" ? p.imageUrl : "");
-    const unique: SceneAsset[] = [...cseResults];
+    for (const p of cseValidated)
+      seen.add(p.kind === "web-image" ? p.imageUrl : "");
+    const candidates: SceneAsset[] = [];
     for (const p of pages) {
       if (!p || seen.has(p.imageUrl)) continue;
       seen.add(p.imageUrl);
-      unique.push(p);
-      if (unique.length >= limit) break;
+      candidates.push(p);
     }
-    return unique.slice(0, limit);
+
+    // og:image들도 검증
+    const validatedFallback = await filterValidImages(candidates);
+    const merged = [...cseValidated, ...validatedFallback];
+    return merged.slice(0, limit);
   } catch {
-    return cseResults.slice(0, limit);
+    return cseValidated.slice(0, limit);
   }
 }
 
