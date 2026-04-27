@@ -392,10 +392,15 @@ async function extractSearchQueries(
 ## 과제
 
 ### 1) videoQueries (YouTube Shorts 검색용)
-- **2~3개 생성**. 가능한 **짧고 일반적인** 키워드로.
-- 제품명 중심 (2~4단어)
+- **3~5개 생성**. 가능한 **짧고 일반적인** 키워드로.
+- 제품명 중심 (1~4단어)
 - **구절 금지** ("Korean X cookie review" 같은 건 ❌). 단순 명사 조합만.
-- 한국어/영어 섞어도 OK (외국 크리에이터도 brand 이름으로는 검색됨)
+- ⚠️ **스펠링 변형 반드시 포함** (YouTube Data API는 오타 교정 X):
+  - 한국어 원어
+  - 공식 로마자 표기 (회사 공식, 예: "Chapagetti", "Bingsoo")
+  - 일반 영문 표기 (예: "homerun ball", "banana milk")
+  - 흔한 영문 변형/오타 (예: "jjapaghetti", "chapaghetti")
+- 한국 제품이면 **영어로 어떻게 알려져 있는지** 반드시 1개 이상 포함
 
 ### 2) imageQueries (구글 이미지 검색용, 전세계 OK)
 - **2~3개 한국어**
@@ -406,15 +411,18 @@ async function extractSearchQueries(
 
 대본: "바삭한 튀김과 부드러운 크림의 조합"
 제품: "홈런볼"
-→ videoQueries: ["홈런볼", "homerun ball snack", "홈런볼 단면"]
+→ videoQueries: ["홈런볼", "homerun ball", "home run ball", "korean homerun ball"]
 → imageQueries: ["홈런볼 단면", "홈런볼 크림", "홈런볼 쪼갠 모습"]
 
-대본: "여러분 이 동그란 모양 그냥 만든 건 줄 알았어요?"
-제품: "홈런볼"
-→ videoQueries: ["홈런볼", "homerun ball", "홈런볼 해태"]
-→ imageQueries: ["홈런볼 해태", "홈런볼 클로즈업", "홈런볼 포장지"]
+제품: "짜파게티"
+→ videoQueries: ["짜파게티", "Chapagetti", "jjapaghetti", "chapaghetti", "Korean black bean noodle"]
+→ imageQueries: ["짜파게티", "짜파게티 조리", "짜파게티 봉지"]
 
-**짧고 단순하게. 실제 유튜브 검색창에 사람이 치는 스타일로.**
+제품: "바나나맛 우유"
+→ videoQueries: ["바나나맛우유", "banana milk", "binggrae banana milk", "korean banana milk"]
+→ imageQueries: ["바나나맛 우유", "바나나우유 항아리", "빙그레 바나나우유"]
+
+**짧고 단순하게. 스펠링 변형 다양하게. 실제 유튜브 검색창에 사람이 치는 스타일로.**
 
 JSON으로 반환.`;
 
@@ -433,7 +441,7 @@ JSON으로 반환.`;
     const parsed = JSON.parse(text);
     const videoQueries = (parsed.videoQueries || [])
       .filter((s: unknown): s is string => typeof s === "string" && !!s.trim())
-      .slice(0, 3);
+      .slice(0, 5);
     const imageQueries = (parsed.imageQueries || [])
       .filter((s: unknown): s is string => typeof s === "string" && !!s.trim())
       .slice(0, 3);
