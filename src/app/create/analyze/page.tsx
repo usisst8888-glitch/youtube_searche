@@ -35,6 +35,7 @@ export default function AnalyzePage() {
   const [queriesBySceneIndex, setQueriesBySceneIndex] = useState<
     Record<number, { videoQueries: string[]; imageQueries: string[] }>
   >({});
+  const [hoveredAssetKey, setHoveredAssetKey] = useState<string | null>(null);
 
   const handleAnalyze = async () => {
     setError("");
@@ -420,25 +421,66 @@ export default function AnalyzePage() {
                                 (sel) => assetKey(sel) === assetKey(a),
                               ) + 1
                             : 0;
+                          const k = assetKey(a);
+                          const isHovered = hoveredAssetKey === k;
+                          const isVideo =
+                            a.kind === "youtube-short" || a.kind === "tiktok";
+                          const previewUrl =
+                            a.kind === "youtube-short"
+                              ? `https://www.youtube.com/embed/${a.videoId}?autoplay=1&mute=1&controls=0&loop=1&playlist=${a.videoId}&modestbranding=1`
+                              : a.kind === "tiktok"
+                                ? `https://www.tiktok.com/embed/v2/${a.videoId}?autoplay=1&music_info=0`
+                                : "";
                           return (
-                            <button
+                            <div
                               key={`${a.kind}-${idx}`}
-                              type="button"
+                              role="button"
+                              tabIndex={0}
                               onClick={() =>
                                 toggleAsset(activeSceneIndex, a)
                               }
-                              className={`relative text-left border rounded-lg overflow-hidden hover:border-red-400 ${
+                              onMouseEnter={() => setHoveredAssetKey(k)}
+                              onMouseLeave={() =>
+                                setHoveredAssetKey((cur) =>
+                                  cur === k ? null : cur,
+                                )
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  toggleAsset(activeSceneIndex, a);
+                                }
+                              }}
+                              className={`relative text-left border rounded-lg overflow-hidden cursor-pointer hover:border-red-400 ${
                                 isSelected
                                   ? "border-red-500 ring-2 ring-red-500"
                                   : "border-zinc-200 dark:border-zinc-800"
                               }`}
                             >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={thumb}
-                                alt=""
-                                className="w-full aspect-[9/16] object-cover bg-zinc-100 dark:bg-zinc-800"
-                              />
+                              <div className="relative w-full aspect-[9/16] bg-zinc-100 dark:bg-zinc-800">
+                                {isHovered && isVideo && previewUrl ? (
+                                  <iframe
+                                    src={previewUrl}
+                                    title="preview"
+                                    allow="autoplay; encrypted-media"
+                                    className="absolute inset-0 w-full h-full pointer-events-none"
+                                  />
+                                ) : (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={thumb}
+                                    alt=""
+                                    className="absolute inset-0 w-full h-full object-cover"
+                                  />
+                                )}
+                                {isVideo && !isHovered && (
+                                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <div className="bg-black/50 rounded-full w-9 h-9 flex items-center justify-center text-white text-base">
+                                      ▶
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                               <div className="absolute top-1 left-1 text-[9px] bg-black/70 text-white px-1.5 py-0.5 rounded">
                                 {assetLabel(a)}
                               </div>
@@ -470,7 +512,7 @@ export default function AnalyzePage() {
                                   </a>
                                 </div>
                               </div>
-                            </button>
+                            </div>
                           );
                         })}
                       </div>
