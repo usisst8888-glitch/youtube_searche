@@ -185,7 +185,7 @@ export default function CreateResearchPage() {
             onChange={(e) => setCount(parseInt(e.target.value, 10))}
             className="border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
           >
-            {[1, 2, 3, 4, 5].map((n) => (
+            {[3, 5, 10, 15, 20, 30].map((n) => (
               <option key={n} value={n}>
                 {n}개씩
               </option>

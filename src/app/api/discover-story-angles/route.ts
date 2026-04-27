@@ -131,7 +131,7 @@ export async function POST(req: NextRequest) {
     const {
       category = "전체",
       count = 20,
-      similarityThreshold = 0.85,
+      similarityThreshold = 0.92,
     } = await req.json();
 
     if (!process.env.GEMINI_API_KEY) {

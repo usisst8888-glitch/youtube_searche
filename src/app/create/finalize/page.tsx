@@ -22,6 +22,13 @@ function assetToImageUrl(a: WebSceneAsset): string {
   return a.coverUrl;
 }
 
+// 영상 자산 다운로드 URL 추출 (썸네일 X, 실제 재생 가능한 URL)
+function assetToVideoUrl(a: WebSceneAsset): string | null {
+  if (a.kind === "youtube-short") return a.watchUrl;
+  if (a.kind === "tiktok") return a.playUrl || a.watchUrl;
+  return null;
+}
+
 function wrapText(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -296,21 +303,69 @@ export default function FinalizePage() {
         await ffmpeg.writeFile(`title_${i}.png`, titlePng);
 
         // 2) 하단 영역 — 각 소재를 720x896 클립으로 정규화 후 concat
+        //    영상 자산: 실제 영상 다운로드 → 처음부터 perAsset 초만 사용
+        //    이미지 자산: Ken Burns 효과로 perAsset 초 클립 생성
         const bottomClips: string[] = [];
         for (let j = 0; j < assets.length; j++) {
           const a = assets[j];
-          const url = assetToImageUrl(a);
-          if (!url) continue;
+          const videoUrl = assetToVideoUrl(a);
+          const bottomName = `b${i}_${j}.mp4`;
 
+          if (videoUrl) {
+            // 영상 다운로드 시도
+            setProgress(
+              `씬 ${i + 1} · 영상 ${j + 1}/${assets.length} 다운로드 중...`,
+            );
+            try {
+              const res = await fetch(
+                `/api/download-video?url=${encodeURIComponent(videoUrl)}`,
+              );
+              if (!res.ok) throw new Error(`download ${res.status}`);
+              const buf = await res.arrayBuffer();
+              const inName = `vs${i}_${j}.mp4`;
+              await ffmpeg.writeFile(inName, new Uint8Array(buf));
+
+              setProgress(`씬 ${i + 1} · 영상 ${j + 1} 클립화...`);
+              await ffmpeg.exec([
+                "-y",
+                "-ss",
+                "0",
+                "-t",
+                String(perAsset),
+                "-i",
+                inName,
+                "-vf",
+                `scale=${TEMPLATE.width}:${BOTTOM_HEIGHT}:force_original_aspect_ratio=increase,crop=${TEMPLATE.width}:${BOTTOM_HEIGHT},fps=${TEMPLATE.fps}`,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+                bottomName,
+              ]);
+              bottomClips.push(bottomName);
+              continue;
+            } catch (err) {
+              // 다운로드 실패 → 썸네일 fallback
+              setProgress(
+                `씬 ${i + 1} · 영상 다운로드 실패 (${err instanceof Error ? err.message : "오류"}), 썸네일로 대체`,
+              );
+            }
+          }
+
+          // 이미지 (또는 영상 다운로드 실패 시 썸네일)
+          const imgUrl = assetToImageUrl(a);
+          if (!imgUrl) continue;
           setProgress(
-            `씬 ${i + 1} · 소재 ${j + 1}/${assets.length} 다운로드`,
+            `씬 ${i + 1} · 이미지 ${j + 1}/${assets.length} 다운로드`,
           );
-          const bytes = await downloadAndProxy(url);
+          const bytes = await downloadAndProxy(imgUrl);
           const ext =
-            url.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i)?.[1]?.toLowerCase() ||
+            imgUrl.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i)?.[1]?.toLowerCase() ||
             "jpg";
           const inName = `s${i}_${j}.${ext}`;
-          const bottomName = `b${i}_${j}.mp4`;
           await ffmpeg.writeFile(inName, bytes);
 
           await ffmpeg.exec([
