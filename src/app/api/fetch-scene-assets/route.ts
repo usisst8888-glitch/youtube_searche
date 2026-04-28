@@ -12,6 +12,30 @@ export const runtime = "nodejs";
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 
+// 서버 메모리 캐시 (10분 TTL) — 동일 씬/제품 재요청 즉시 반환
+const CACHE_TTL_MS = 10 * 60 * 1000;
+type CacheEntry = { value: unknown; expiresAt: number };
+const sceneCache = new Map<string, CacheEntry>();
+
+function cacheGet(key: string): unknown | null {
+  const e = sceneCache.get(key);
+  if (!e) return null;
+  if (e.expiresAt < Date.now()) {
+    sceneCache.delete(key);
+    return null;
+  }
+  return e.value;
+}
+
+function cacheSet(key: string, value: unknown) {
+  sceneCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+  // 캐시 크기 제한 (최대 200개)
+  if (sceneCache.size > 200) {
+    const firstKey = sceneCache.keys().next().value;
+    if (firstKey !== undefined) sceneCache.delete(firstKey);
+  }
+}
+
 type SceneAsset =
   | {
       kind: "youtube-short";
@@ -135,11 +159,11 @@ async function searchYoutubeShorts(
   const key = process.env.YOUTUBE_API_KEY;
   if (!key) return [];
   try {
-    // YouTube 자체 관련성 순서를 유지 (조회수 순 X — 모호한 키워드일 때 야구 영상 등이 올라옴)
+    // 단일 검색 (relevance) — 이중 호출보다 2배 빠름
     const searched = await searchShorts(
       key,
       query,
-      50,
+      30,
       region,
       lang,
       undefined,
@@ -274,9 +298,13 @@ async function findWebImages(
   query: string,
   limit = 3,
 ): Promise<SceneAsset[]> {
-  // 1) Google Custom Search (이미지 검색) — 키 있을 때 우선
-  //    검증 후에 limit 개수만큼 남도록 여유분 (3배) 가져옴
-  const cseRaw = await googleCseImageSearch(query, limit * 3);
+  // 1) Google Custom Search 우선 — CSE 결과는 보통 신뢰 가능, 검증 생략
+  const cseRaw = await googleCseImageSearch(query, limit * 2);
+  if (cseRaw.length >= limit) {
+    return cseRaw.slice(0, limit);
+  }
+
+  // CSE 부족할 때만 검증 후 og:image fallback 진입
   const cseValidated = await filterValidImages(cseRaw);
   if (cseValidated.length >= limit) {
     return cseValidated.slice(0, limit);
@@ -535,7 +563,7 @@ export async function POST(req: NextRequest) {
       lang = "en",
       ytLimit = 8,
       imgLimit = 6,
-      tiktokLimit = 3,
+      tiktokLimit = 0,
     } = await req.json();
 
     if (!sceneText || typeof sceneText !== "string") {
@@ -543,6 +571,21 @@ export async function POST(req: NextRequest) {
         { error: "sceneText가 필요합니다." },
         { status: 400 },
       );
+    }
+
+    // 캐시 확인 — 동일 입력이면 즉시 반환
+    const cacheKey = JSON.stringify({
+      sceneText,
+      productName: productName || "",
+      region,
+      lang,
+      ytLimit,
+      imgLimit,
+      tiktokLimit,
+    });
+    const cached = cacheGet(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached);
     }
 
     // 1) LLM으로 시각적 검색어 추출 (영상용 복수, 이미지용 복수)
@@ -617,7 +660,7 @@ export async function POST(req: NextRequest) {
 
     const flat: SceneAsset[] = [...youtube, ...tiktok, ...images];
 
-    return NextResponse.json({
+    const result = {
       sceneText,
       emotion,
       videoQueries: videoQueryList,
@@ -628,7 +671,9 @@ export async function POST(req: NextRequest) {
         "web-image": images.length,
         tiktok: tiktok.length,
       },
-    });
+    };
+    cacheSet(cacheKey, result);
+    return NextResponse.json(result);
   } catch (e) {
     const message = e instanceof Error ? e.message : "서버 오류";
     return NextResponse.json({ error: message }, { status: 500 });

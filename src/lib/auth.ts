@@ -30,10 +30,12 @@ export async function lookupTeamUser(
   if (!name || !hasSupabase()) return null;
   try {
     const supa = getSupabaseServer();
+    // 한글 입력이 NFD(분해형)로 들어오는 경우 DB의 NFC와 매칭이 안 되므로 정규화
+    const normalized = name.trim().normalize("NFC");
     const { data, error } = await supa
       .from("team_users")
       .select("id, name, display_name")
-      .eq("name", name.trim())
+      .eq("name", normalized)
       .maybeSingle();
     if (error || !data) return null;
     return {

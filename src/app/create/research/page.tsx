@@ -24,7 +24,14 @@ type LibraryResponse = {
   counts: { all: number; idea: number; producing: number; done: number; skipped: number };
 };
 
-const CATEGORIES = [
+type CategoryRow = {
+  id: string;
+  name: string;
+  display_order: number;
+};
+
+// fallback (DB에서 못 가져오면 이걸 사용)
+const FALLBACK_CATEGORIES = [
   "전체",
   "식품",
   "뷰티",
@@ -55,6 +62,18 @@ export default function CreateResearchPage() {
   const [count, setCount] = useState(3);
   const [discovering, setDiscovering] = useState(false);
   const [discoverStatus, setDiscoverStatus] = useState("");
+
+  // 기사 임포트 폼
+  const [articleText, setArticleText] = useState("");
+  const [articleUrl, setArticleUrl] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState("");
+  const [importCategory, setImportCategory] = useState("자동");
+
+  // 카테고리 (DB에서 로드)
+  const [categories, setCategories] = useState<CategoryRow[]>([]);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
 
   // 라이브러리
   const [library, setLibrary] = useState<LibraryResponse | null>(null);
@@ -88,6 +107,69 @@ export default function CreateResearchPage() {
     loadLibrary();
   }, [loadLibrary]);
 
+  const loadCategories = useCallback(async () => {
+    try {
+      const res = await fetch("/api/categories");
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.categories)) {
+        setCategories(data.categories);
+      }
+    } catch {
+      // fallback 유지
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
+
+  const categoryNames =
+    categories.length > 0
+      ? ["전체", ...categories.map((c) => c.name)]
+      : FALLBACK_CATEGORIES;
+  const categoryNamesNoAll = categoryNames.filter((c) => c !== "전체");
+
+  const handleAddCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    setError("");
+    try {
+      const maxOrder = categories.reduce(
+        (m, c) => Math.max(m, c.display_order),
+        0,
+      );
+      const res = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, displayOrder: maxOrder + 1 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "추가 실패");
+      setNewCategoryName("");
+      await loadCategories();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    }
+  };
+
+  const handleDeleteCategory = async (id: string, name: string) => {
+    if (!confirm(`"${name}" 카테고리를 삭제할까요? (기존 라이브러리 항목의 분류는 그대로 남습니다)`))
+      return;
+    setError("");
+    try {
+      const res = await fetch("/api/categories", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "삭제 실패");
+      await loadCategories();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    }
+  };
+
   const handleDiscover = async () => {
     setError("");
     setDiscoverStatus("Gemini에 ${count * 1.6}개 후보 요청 중...");
@@ -115,6 +197,43 @@ export default function CreateResearchPage() {
       setDiscoverStatus("");
     } finally {
       setDiscovering(false);
+    }
+  };
+
+  const handleImportArticle = async () => {
+    setError("");
+    if (!articleText.trim() || articleText.trim().length < 50) {
+      setError("기사 본문을 50자 이상 붙여넣어주세요.");
+      return;
+    }
+    setImporting(true);
+    setImportStatus("Gemini가 기사 분석 중...");
+    try {
+      const res = await authFetch("/api/import-from-article", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          articleText: articleText.trim(),
+          articleUrl: articleUrl.trim() || undefined,
+          manualCategory:
+            importCategory && importCategory !== "자동"
+              ? importCategory
+              : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "기사 임포트 실패");
+      setImportStatus(
+        `✅ 저장됨 [${data.angle?.product_category || "기타"}] — "${data.angle?.angle?.slice(0, 40) || ""}..." (상품: ${data.angle?.product_name || ""})`,
+      );
+      setArticleText("");
+      setArticleUrl("");
+      await loadLibrary();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+      setImportStatus("");
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -165,6 +284,136 @@ export default function CreateResearchPage() {
 
   return (
     <div className="space-y-6">
+      {/* 카테고리 관리 (최상단) */}
+      <section className="bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+        <button
+          type="button"
+          onClick={() => setShowCategoryManager((v) => !v)}
+          className="w-full flex items-center justify-between text-sm font-semibold"
+        >
+          <span>🏷️ 카테고리 관리 ({categories.length}개)</span>
+          <span className="text-xs text-zinc-500">
+            {showCategoryManager ? "▲ 닫기" : "▼ 펼치기"}
+          </span>
+        </button>
+        {showCategoryManager && (
+          <div className="mt-3 space-y-3">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAddCategory();
+                  }
+                }}
+                placeholder="새 카테고리명 (예: 자동차, 키즈)"
+                className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-1.5 text-sm"
+              />
+              <button
+                type="button"
+                onClick={handleAddCategory}
+                disabled={!newCategoryName.trim()}
+                className="bg-zinc-700 hover:bg-zinc-800 disabled:bg-zinc-300 text-white text-sm px-4 py-1.5 rounded-lg"
+              >
+                ➕ 추가
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {categories.map((c) => (
+                <span
+                  key={c.id}
+                  className="inline-flex items-center gap-1 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-full px-3 py-1 text-xs"
+                >
+                  <span>{c.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteCategory(c.id, c.name)}
+                    className="text-zinc-400 hover:text-red-500 ml-1"
+                    title="삭제"
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+              {categories.length === 0 && (
+                <p className="text-xs text-zinc-500">
+                  카테고리가 비어있습니다. 위에서 추가하세요.
+                </p>
+              )}
+            </div>
+            <p className="text-[10px] text-zinc-500">
+              ⚠️ 카테고리 삭제해도 라이브러리의 기존 항목 분류는 그대로 남습니다.
+              필터에서만 빠집니다.
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/* Section 0: 기사 → 썰 임포트 */}
+      <section className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl p-6">
+        <h2 className="font-semibold mb-1">📰 기사로 썰 추가</h2>
+        <p className="text-xs text-zinc-500 mb-4">
+          뉴스/블로그 본문을 통째로 붙여넣으면 Gemini가 어그로 후크 + 어울리는
+          상품을 자동 추출해서 라이브러리에 저장합니다.
+        </p>
+
+        <div className="space-y-2">
+          <textarea
+            rows={6}
+            value={articleText}
+            onChange={(e) => setArticleText(e.target.value)}
+            placeholder="기사 본문 전체를 붙여넣으세요... (제목 + 본문, 최소 50자)"
+            className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm font-mono"
+          />
+          <input
+            type="url"
+            value={articleUrl}
+            onChange={(e) => setArticleUrl(e.target.value)}
+            placeholder="기사 URL (선택, 출처로 저장됨)"
+            className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-xs text-zinc-600 dark:text-zinc-400 font-medium">
+              카테고리:
+            </label>
+            <select
+              value={importCategory}
+              onChange={(e) => setImportCategory(e.target.value)}
+              className="border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-2 py-1.5 text-sm"
+            >
+              <option value="자동">🤖 AI 자동 추정</option>
+              {categoryNamesNoAll.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleImportArticle}
+              disabled={importing}
+              className="bg-amber-600 hover:bg-amber-700 disabled:bg-zinc-400 text-white text-sm font-semibold px-4 py-2 rounded-lg"
+            >
+              {importing
+                ? "분석 중... (10~20초)"
+                : "📰 기사 → 썰 추출 & 저장"}
+            </button>
+            <span className="text-xs text-zinc-500">
+              {articleText.length}자 / URL{" "}
+              {articleUrl ? "✅" : "(선택)"}
+            </span>
+            {importStatus && (
+              <span className="text-xs text-emerald-600 dark:text-emerald-400 ml-auto">
+                {importStatus}
+              </span>
+            )}
+          </div>
+        </div>
+      </section>
+
       {/* Section 1: 썰 발굴 */}
       <section className="bg-sky-50 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-900/40 rounded-xl p-6">
         <h2 className="font-semibold mb-1">🔍 썰 발굴</h2>
@@ -179,7 +428,7 @@ export default function CreateResearchPage() {
             onChange={(e) => setCategory(e.target.value)}
             className="border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
           >
-            {CATEGORIES.map((c) => (
+            {categoryNames.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
@@ -273,7 +522,7 @@ export default function CreateResearchPage() {
             onChange={(e) => setFilterCategory(e.target.value)}
             className="border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-1.5 text-sm"
           >
-            {CATEGORIES.map((c) => (
+            {categoryNames.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
@@ -309,7 +558,7 @@ export default function CreateResearchPage() {
               groups[cat].push(a);
             }
             // 카테고리 정렬: 기본 순서에 없으면 끝으로
-            const order = CATEGORIES.filter((c) => c !== "전체");
+            const order = categoryNamesNoAll;
             const sortedCats = Object.keys(groups).sort((a, b) => {
               const ia = order.indexOf(a);
               const ib = order.indexOf(b);

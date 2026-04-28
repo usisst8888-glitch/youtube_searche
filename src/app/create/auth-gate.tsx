@@ -103,7 +103,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="예: 배철웅"
+              placeholder="본인 이름"
               autoFocus
               className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
             />

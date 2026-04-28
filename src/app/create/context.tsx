@@ -49,6 +49,26 @@ export type StoryAngleData = {
   productCategory: string | null;
 };
 
+export type ShotMedia = {
+  imageUrl: string;
+  sourceUrl: string;
+  siteName: string;
+  thumbnailUrl?: string;
+  title: string;
+  // 영상 클립인 경우만 채워짐 (YouTube)
+  videoId?: string;
+  embedUrl?: string;
+  watchUrl?: string;
+};
+
+export type ShotEntry = {
+  slot: number;
+  role: string;
+  roleLabel: string;
+  query: string;
+  image: ShotMedia | null;
+};
+
 export type WebSceneAsset =
   | {
       kind: "youtube-short";
@@ -93,6 +113,9 @@ type ProjectState = {
   storyPremise: string;
   setStoryPremise: (v: string) => void;
 
+  videoTitle: string;
+  setVideoTitle: (v: string) => void;
+
   storyAngleData: StoryAngleData | null;
   setStoryAngleData: (v: StoryAngleData | null) => void;
 
@@ -129,11 +152,117 @@ type ProjectState = {
         ) => Record<number, WebSceneAsset[]>),
   ) => void;
 
+  // AI 이미지 생성: [sceneIndex][slot] = dataUrl ("" = 미생성/실패)
+  sceneImages: Record<number, string[]>;
+  setSceneImages: (
+    v:
+      | Record<number, string[]>
+      | ((prev: Record<number, string[]>) => Record<number, string[]>),
+  ) => void;
+
+  styleGuide: string;
+  setStyleGuide: (v: string) => void;
+
+  scenePrompts: Record<number, string>;
+  setScenePrompts: (
+    v:
+      | Record<number, string>
+      | ((prev: Record<number, string>) => Record<number, string>),
+  ) => void;
+
+  anchorImageUrl: string;
+  setAnchorImageUrl: (v: string) => void;
+
+  // 구글 이미지 검색 결과 (씬별 후보)
+  googleSceneImages: Record<
+    number,
+    {
+      imageUrl: string;
+      sourceUrl: string;
+      title: string;
+      siteName: string;
+      thumbnailUrl?: string;
+    }[]
+  >;
+  setGoogleSceneImages: (
+    v:
+      | Record<
+          number,
+          {
+            imageUrl: string;
+            sourceUrl: string;
+            title: string;
+            siteName: string;
+            thumbnailUrl?: string;
+          }[]
+        >
+      | ((
+          prev: Record<
+            number,
+            {
+              imageUrl: string;
+              sourceUrl: string;
+              title: string;
+              siteName: string;
+              thumbnailUrl?: string;
+            }[]
+          >,
+        ) => Record<
+          number,
+          {
+            imageUrl: string;
+            sourceUrl: string;
+            title: string;
+            siteName: string;
+            thumbnailUrl?: string;
+          }[]
+        >),
+  ) => void;
+
+  // 사용자가 선택한 구글 이미지 URL 집합 (씬별)
+  selectedGoogleImageUrls: Record<number, string[]>;
+  setSelectedGoogleImageUrls: (
+    v:
+      | Record<number, string[]>
+      | ((prev: Record<number, string[]>) => Record<number, string[]>),
+  ) => void;
+
+  // 씬별로 사용된 (또는 사용자가 편집한) 구글 검색어
+  googleQueriesByScene: Record<number, string[]>;
+  setGoogleQueriesByScene: (
+    v:
+      | Record<number, string[]>
+      | ((prev: Record<number, string[]>) => Record<number, string[]>),
+  ) => void;
+
+  // 기사 URL에서 추출한 씬별 이미지 (URL 직접)
+  articleImagesByScene: Record<number, string[]>;
+  setArticleImagesByScene: (
+    v:
+      | Record<number, string[]>
+      | ((prev: Record<number, string[]>) => Record<number, string[]>),
+  ) => void;
+
+  // 씬별 자동 컷 구성 결과 (역할 기반 ordered, 5컷 — YouTube 영상 + 기사 + AI)
+  shotlistByScene: Record<number, ShotEntry[]>;
+  setShotlistByScene: (
+    v:
+      | Record<number, ShotEntry[]>
+      | ((
+          prev: Record<number, ShotEntry[]>,
+        ) => Record<number, ShotEntry[]>),
+  ) => void;
+
+  // 클립별 자막 텍스트 (씬 단위 배열 — 클립 하나당 한 문장)
+  clipCaptions: Record<number, string[]>;
+  setClipCaptions: (
+    v:
+      | Record<number, string[]>
+      | ((prev: Record<number, string[]>) => Record<number, string[]>),
+  ) => void;
+
   ttsAudioUrl: string | null;
   setTtsAudioUrl: (v: string | null) => void;
-
-  bgmAudioUrl: string | null;
-  setBgmAudioUrl: (v: string | null) => void;
 
   finalVideoUrl: string | null;
   setFinalVideoUrl: (v: string | null) => void;
@@ -147,6 +276,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [productName, setProductName] = useState("");
   const [productResearch, setProductResearch] = useState("");
   const [storyPremise, setStoryPremise] = useState("");
+  const [videoTitle, setVideoTitle] = useState("");
   const [storyAngleData, setStoryAngleData] = useState<StoryAngleData | null>(
     null,
   );
@@ -161,8 +291,38 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [selectedSceneAssets, setSelectedSceneAssets] = useState<
     Record<number, WebSceneAsset[]>
   >({});
+  const [sceneImages, setSceneImages] = useState<Record<number, string[]>>({});
+  const [styleGuide, setStyleGuide] = useState("");
+  const [scenePrompts, setScenePrompts] = useState<Record<number, string>>({});
+  const [anchorImageUrl, setAnchorImageUrl] = useState("");
+  const [googleSceneImages, setGoogleSceneImages] = useState<
+    Record<
+      number,
+      {
+        imageUrl: string;
+        sourceUrl: string;
+        title: string;
+        siteName: string;
+        thumbnailUrl?: string;
+      }[]
+    >
+  >({});
+  const [selectedGoogleImageUrls, setSelectedGoogleImageUrls] = useState<
+    Record<number, string[]>
+  >({});
+  const [googleQueriesByScene, setGoogleQueriesByScene] = useState<
+    Record<number, string[]>
+  >({});
+  const [articleImagesByScene, setArticleImagesByScene] = useState<
+    Record<number, string[]>
+  >({});
+  const [shotlistByScene, setShotlistByScene] = useState<
+    Record<number, ShotEntry[]>
+  >({});
+  const [clipCaptions, setClipCaptions] = useState<Record<number, string[]>>(
+    {},
+  );
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
-  const [bgmAudioUrl, setBgmAudioUrl] = useState<string | null>(null);
   const [finalVideoUrl, setFinalVideoUrl] = useState<string | null>(null);
 
   return (
@@ -178,6 +338,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         setProductResearch,
         storyPremise,
         setStoryPremise,
+        videoTitle,
+        setVideoTitle,
         storyAngleData,
         setStoryAngleData,
         generatedScenes,
@@ -194,10 +356,28 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         setFetchedSceneAssets,
         selectedSceneAssets,
         setSelectedSceneAssets,
+        sceneImages,
+        setSceneImages,
+        styleGuide,
+        setStyleGuide,
+        scenePrompts,
+        setScenePrompts,
+        anchorImageUrl,
+        setAnchorImageUrl,
+        googleSceneImages,
+        setGoogleSceneImages,
+        selectedGoogleImageUrls,
+        setSelectedGoogleImageUrls,
+        googleQueriesByScene,
+        setGoogleQueriesByScene,
+        articleImagesByScene,
+        setArticleImagesByScene,
+        shotlistByScene,
+        setShotlistByScene,
+        clipCaptions,
+        setClipCaptions,
         ttsAudioUrl,
         setTtsAudioUrl,
-        bgmAudioUrl,
-        setBgmAudioUrl,
         finalVideoUrl,
         setFinalVideoUrl,
       }}

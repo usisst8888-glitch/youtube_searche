@@ -2,7 +2,17 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useProject, WebSceneAsset } from "../context";
+import { useProject, WebSceneAsset, SceneScript } from "../context";
+
+const IMAGES_PER_SCENE = 5;
+
+type GenItem = {
+  sceneIndex: number;
+  slot: number;
+  dataUrl: string;
+  prompt: string;
+  error?: string;
+};
 
 export default function AnalyzePage() {
   const {
@@ -14,28 +24,48 @@ export default function AnalyzePage() {
     setProductResearch,
     storyPremise,
     setStoryPremise,
+    videoTitle,
+    setVideoTitle,
     generatedScenes,
     setGeneratedScenes,
     setAnalysis,
-    fetchedSceneAssets,
     setFetchedSceneAssets,
-    selectedSceneAssets,
     setSelectedSceneAssets,
     storyAngleData,
+    sceneImages,
+    setSceneImages,
+    styleGuide,
+    setStyleGuide,
+    scenePrompts,
+    setScenePrompts,
+    anchorImageUrl,
+    setAnchorImageUrl,
+    googleSceneImages,
+    setGoogleSceneImages,
+    selectedGoogleImageUrls,
+    setSelectedGoogleImageUrls,
+    googleQueriesByScene,
+    setGoogleQueriesByScene,
+    shotlistByScene,
+    setShotlistByScene,
+    articleImagesByScene,
+    setArticleImagesByScene,
   } = useProject();
+
+  // 씬별로 편집 중인 검색어 입력 (커밋 전 임시 상태)
+  const [queryDraftByScene, setQueryDraftByScene] = useState<
+    Record<number, string>
+  >({});
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [fetchingSceneIndex, setFetchingSceneIndex] = useState<number | null>(
-    null,
-  );
+  const [busy, setBusy] = useState<string | null>(null); // "all" | "scene-N" | "image-N-S"
+  const [hoveredAssetKey, setHoveredAssetKey] = useState<string | null>(null);
+  // 컷별 이미 본 미디어 (중복 회피용) — `${sceneIdx}-${slot}` → Set of (videoId | imageUrl)
+  const [seenByShot, setSeenByShot] = useState<Record<string, string[]>>({});
   const [activeSceneIndex, setActiveSceneIndex] = useState<number | null>(
     null,
   );
-  const [queriesBySceneIndex, setQueriesBySceneIndex] = useState<
-    Record<number, { videoQueries: string[]; imageQueries: string[] }>
-  >({});
-  const [hoveredAssetKey, setHoveredAssetKey] = useState<string | null>(null);
 
   const handleAnalyze = async () => {
     setError("");
@@ -58,7 +88,19 @@ export default function AnalyzePage() {
       setGeneratedScenes(data.scenes || []);
       setProductResearch(data.productResearch || "");
       setStoryPremise(data.storyPremise || "");
+      setVideoTitle(data.videoTitle || "");
       setAnalysis(null);
+      // 새 대본이면 이전 이미지/앵커 초기화
+      setSceneImages({});
+      setStyleGuide("");
+      setScenePrompts({});
+      setAnchorImageUrl("");
+      setGoogleSceneImages({});
+      setSelectedGoogleImageUrls({});
+      setGoogleQueriesByScene({});
+      setShotlistByScene({});
+      setArticleImagesByScene({});
+      setQueryDraftByScene({});
       setFetchedSceneAssets({});
       setSelectedSceneAssets({});
       setActiveSceneIndex(0);
@@ -69,105 +111,833 @@ export default function AnalyzePage() {
     }
   };
 
-  const fetchAssetsForScene = async (sceneIndex: number) => {
-    const scene = generatedScenes[sceneIndex];
-    if (!scene) return;
-    setFetchingSceneIndex(sceneIndex);
-    setError("");
-    try {
-      const res = await fetch("/api/fetch-scene-assets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sceneText: scene.text,
-          emotion: scene.emotion,
-          productName,
-          region: "",
-          lang: "en",
-          ytLimit: 8,
-          imgLimit: 6,
-          tiktokLimit: 3,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "소재 수집 실패");
-      setFetchedSceneAssets((prev) => ({
-        ...prev,
-        [sceneIndex]: data.assets as WebSceneAsset[],
+  // AI + 자동 컷 + 기사 이미지 + 수동 선택 → selectedSceneAssets 동기화
+  const syncToSelectedAssets = (
+    nextSceneImages: Record<number, string[]>,
+    nextSelectedGoogle: Record<number, string[]>,
+    nextShotlist: typeof shotlistByScene = shotlistByScene,
+    nextArticleImages: Record<number, string[]> = articleImagesByScene,
+  ) => {
+    const selected: Record<number, WebSceneAsset[]> = {};
+    const sceneIdxSet = new Set<number>([
+      ...Object.keys(nextSceneImages).map(Number),
+      ...Object.keys(nextSelectedGoogle).map(Number),
+      ...Object.keys(nextShotlist).map(Number),
+      ...Object.keys(nextArticleImages).map(Number),
+    ]);
+    for (const sceneIdx of sceneIdxSet) {
+      const aiImages = (nextSceneImages[sceneIdx] || []).filter((u) => !!u);
+      const aiAssets: WebSceneAsset[] = aiImages.map((dataUrl, i) => ({
+        kind: "web-image",
+        imageUrl: dataUrl,
+        sourceUrl: `ai-generated://scene-${sceneIdx}-slot-${i}`,
+        title: `AI 이미지 ${i + 1}`,
+        siteName: "AI 생성",
       }));
-      setQueriesBySceneIndex((prev) => ({
-        ...prev,
-        [sceneIndex]: {
-          videoQueries: data.videoQueries || [],
-          imageQueries: data.imageQueries || [],
-        },
-      }));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "오류");
-    } finally {
-      setFetchingSceneIndex(null);
+
+      const shotAssets: WebSceneAsset[] = (nextShotlist[sceneIdx] || [])
+        .slice()
+        .sort((a, b) => a.slot - b.slot)
+        .filter((s) => !!s.image)
+        .map<WebSceneAsset>((s) => {
+          const img = s.image!;
+          // 영상이 있으면 youtube-short, 없으면 web-image
+          if (img.videoId && img.embedUrl && img.watchUrl) {
+            return {
+              kind: "youtube-short",
+              videoId: img.videoId,
+              title: s.roleLabel || img.title,
+              thumbnail: img.thumbnailUrl || img.imageUrl,
+              views: 0,
+              channel: img.siteName,
+              embedUrl: img.embedUrl,
+              watchUrl: img.watchUrl,
+            };
+          }
+          return {
+            kind: "web-image",
+            imageUrl: img.imageUrl,
+            sourceUrl: img.sourceUrl,
+            title: s.roleLabel || img.title,
+            siteName: img.siteName,
+          };
+        });
+
+      // 기사 이미지는 이미 shotlist에 통합되었으므로 별도 추가 없음
+      void nextArticleImages;
+
+      const googleUrls = nextSelectedGoogle[sceneIdx] || [];
+      const googlePool = googleSceneImages[sceneIdx] || [];
+      const googleAssets: WebSceneAsset[] = googleUrls
+        .map((url) => googlePool.find((g) => g.imageUrl === url))
+        .filter((g): g is NonNullable<typeof g> => !!g)
+        .map<WebSceneAsset>((g) => ({
+          kind: "web-image",
+          imageUrl: g.imageUrl,
+          sourceUrl: g.sourceUrl,
+          title: g.title,
+          siteName: g.siteName,
+        }));
+
+      const combined = [...aiAssets, ...shotAssets, ...googleAssets];
+      if (combined.length > 0) selected[sceneIdx] = combined;
     }
+    setSelectedSceneAssets(selected);
   };
 
-  const assetKey = (a: WebSceneAsset): string => {
-    if (a.kind === "youtube-short") return `yt:${a.videoId}`;
-    if (a.kind === "web-image") return `img:${a.imageUrl}`;
-    return `tt:${a.videoId}`;
-  };
-
-  const isAssetSelected = (
-    sceneIndex: number,
-    asset: WebSceneAsset,
-  ): boolean => {
-    const list = selectedSceneAssets[sceneIndex] || [];
-    const k = assetKey(asset);
-    return list.some((a) => assetKey(a) === k);
-  };
-
-  const toggleAsset = (sceneIndex: number, asset: WebSceneAsset) => {
-    setSelectedSceneAssets((prev) => {
-      const list = prev[sceneIndex] || [];
-      const k = assetKey(asset);
-      const existing = list.findIndex((a) => assetKey(a) === k);
-      const next =
-        existing >= 0
-          ? list.filter((_, i) => i !== existing)
-          : [...list, asset];
-      return { ...prev, [sceneIndex]: next };
+  const callGen = async (params: {
+    mode: "all" | "scene" | "image";
+    scenes: SceneScript[];
+    sceneIndex?: number;
+    slot?: number;
+    freshPrompts?: boolean; // true면 styleGuide/scenePrompts 보내지 않음 (서버에서 새로 생성)
+  }) => {
+    const res = await fetch("/api/generate-scene-images", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: params.mode,
+        scenes: params.scenes.map((s) => ({
+          index: s.index,
+          text: s.text,
+          emotion: s.emotion,
+          durationSec: s.durationSec,
+        })),
+        storyTopic,
+        storyPremise,
+        imagesPerScene: IMAGES_PER_SCENE,
+        // freshPrompts면 빈 값 전달 → 서버에서 새로 생성
+        styleGuide: params.freshPrompts ? undefined : styleGuide || undefined,
+        scenePrompts:
+          params.freshPrompts || Object.keys(scenePrompts).length === 0
+            ? undefined
+            : scenePrompts,
+        anchorImageUrl: anchorImageUrl || undefined,
+        sceneIndex: params.sceneIndex,
+        slot: params.slot,
+      }),
     });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "생성 실패");
+    return data as {
+      styleGuide: string;
+      scenePrompts: Record<number, string>;
+      anchorImageUrl: string;
+      images: GenItem[];
+    };
   };
 
-  const clearAssets = (sceneIndex: number) => {
-    setSelectedSceneAssets((prev) => {
+  const applyResults = (data: {
+    styleGuide: string;
+    scenePrompts: Record<number, string>;
+    anchorImageUrl: string;
+    images: GenItem[];
+  }) => {
+    if (data.styleGuide) setStyleGuide(data.styleGuide);
+    if (data.scenePrompts) setScenePrompts(data.scenePrompts);
+    if (data.anchorImageUrl && !anchorImageUrl)
+      setAnchorImageUrl(data.anchorImageUrl);
+
+    setSceneImages((prev) => {
       const next = { ...prev };
-      delete next[sceneIndex];
+      for (const img of data.images) {
+        if (!img.dataUrl) continue;
+        const slots = next[img.sceneIndex] || [];
+        const updated = [...slots];
+        // 슬롯 인덱스에 맞춰 채우기
+        while (updated.length < img.slot + 1) updated.push("");
+        updated[img.slot] = img.dataUrl;
+        next[img.sceneIndex] = updated;
+      }
+      // selectedSceneAssets 동기화 (AI + 기존 선택된 구글 이미지 모두)
+      syncToSelectedAssets(next, selectedGoogleImageUrls);
       return next;
     });
   };
 
-  const assetThumb = (a: WebSceneAsset): string => {
-    if (a.kind === "youtube-short") return a.thumbnail;
-    if (a.kind === "web-image") return a.imageUrl;
-    return a.coverUrl;
+  // === 기사 URL 이미지 자동 추출 + 씬 배정 ===
+  const articleSourceUrl = (() => {
+    const urls = storyAngleData?.sources || [];
+    return urls.find((u) => /^https?:\/\//i.test(u)) || "";
+  })();
+
+  const fetchArticleImages = async () => {
+    if (!articleSourceUrl) {
+      setError("기사 URL이 없습니다. 라이브러리에서 URL이 있는 썰을 골라주세요.");
+      return;
+    }
+    if (generatedScenes.length === 0) {
+      setError("먼저 대본을 생성하세요.");
+      return;
+    }
+    setBusy("article-images");
+    setError("");
+    try {
+      const res = await fetch("/api/extract-article-assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: articleSourceUrl,
+          scenes: generatedScenes.map((s) => ({
+            index: s.index,
+            text: s.text,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "기사 이미지 추출 실패");
+      const byScene = data.byScene as Record<number, string[]>;
+      setArticleImagesByScene(byScene || {});
+      syncToSelectedAssets(
+        sceneImages,
+        selectedGoogleImageUrls,
+        shotlistByScene,
+        byScene || {},
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setBusy(null);
+    }
   };
 
-  const assetLabel = (a: WebSceneAsset): string => {
-    if (a.kind === "youtube-short") return "🎬 YouTube Shorts";
-    if (a.kind === "web-image") return "🖼️ 제품 이미지";
-    return "🎵 TikTok";
+  // === 자동 컷 구성 (shotlist) ===
+  // 메인 키워드 도출: angle 첫 토큰 → productName → storyTopic 첫 토큰
+  const mainKeyword = (() => {
+    const fromAngle = storyAngleData?.angle?.split(/[\s,!?.…]+/)[0]?.trim();
+    if (fromAngle && fromAngle.length >= 2) return fromAngle;
+    if (productName?.trim()) return productName.trim();
+    const fromTopic = storyTopic.split(/[\s,!?.…]+/)[0]?.trim();
+    return fromTopic || "";
+  })();
+
+  const callAutoShots = async (params: {
+    mode: "all" | "scene" | "shot";
+    sceneIndex?: number;
+    slot?: number;
+    customQuery?: string;
+    excludeVideoIds?: string[];
+    imageSlots?: number;
+    videoSlots?: number;
+  }) => {
+    const res = await fetch("/api/auto-scene-shots", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: params.mode,
+        scenes: generatedScenes.map((s) => ({
+          index: s.index,
+          text: s.text,
+          emotion: s.emotion,
+          durationSec: s.durationSec,
+        })),
+        storyTopic,
+        mainKeyword,
+        shotsPerScene: IMAGES_PER_SCENE,
+        imageSlots: params.imageSlots,
+        videoSlots: params.videoSlots,
+        sceneIndex: params.sceneIndex,
+        slot: params.slot,
+        query: params.customQuery,
+        excludeVideoIds: params.excludeVideoIds,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "자동 컷 구성 실패");
+    return data.shots as {
+      sceneIndex: number;
+      slot: number;
+      role: string;
+      roleLabel: string;
+      query: string;
+      image: {
+        imageUrl: string;
+        sourceUrl: string;
+        siteName: string;
+        thumbnailUrl?: string;
+        title: string;
+        videoId?: string;
+        embedUrl?: string;
+        watchUrl?: string;
+      } | null;
+    }[];
   };
 
-  const assetSource = (a: WebSceneAsset): string => {
-    if (a.kind === "youtube-short") return a.channel;
-    if (a.kind === "web-image") return a.siteName || "웹";
-    return a.author;
+  const autoShotsAll = async () => {
+    if (generatedScenes.length === 0) return;
+    setBusy("shots-all");
+    setError("");
+    try {
+      // Step 1: 기사 URL이 있으면 이미지 추출 + 씬 배정
+      let articleByScene: Record<number, string[]> = {};
+      if (articleSourceUrl) {
+        try {
+          const artRes = await fetch("/api/extract-article-assets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              url: articleSourceUrl,
+              scenes: generatedScenes.map((s) => ({
+                index: s.index,
+                text: s.text,
+              })),
+            }),
+          });
+          const artData = await artRes.json();
+          if (artRes.ok) {
+            articleByScene = artData.byScene || {};
+          }
+        } catch {
+          // 기사 추출 실패해도 fallback
+        }
+      }
+
+      // 씬 간 중복 제거 — 같은 URL이 여러 씬에 있으면 첫 씬에만 유지
+      const usedArticleUrls = new Set<string>();
+      const dedupedArticleByScene: Record<number, string[]> = {};
+      for (const sc of generatedScenes) {
+        const urls = (articleByScene[sc.index] || []).filter(
+          (u) => !usedArticleUrls.has(u),
+        );
+        if (urls.length > 0) {
+          dedupedArticleByScene[sc.index] = urls;
+          urls.forEach((u) => usedArticleUrls.add(u));
+        }
+      }
+      articleByScene = dedupedArticleByScene;
+      setArticleImagesByScene(articleByScene);
+
+      // Step 2: 자동 컷 구성 — 이미지 3 + 영상 2 (API가 mix해서 줌)
+      const IMAGE_SLOTS = 3;
+      const VIDEO_SLOTS = 2;
+      const shots = await callAutoShots({
+        mode: "all",
+        imageSlots: IMAGE_SLOTS,
+        videoSlots: VIDEO_SLOTS,
+      });
+
+      // Step 3: 씬별 합치기 — slot 0는 기사 우선, 1~4는 랜덤 셔플
+      const shuffle = <T,>(arr: T[]): T[] => {
+        const out = [...arr];
+        for (let i = out.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [out[i], out[j]] = [out[j], out[i]];
+        }
+        return out;
+      };
+
+      const merged: typeof shotlistByScene = {};
+      for (const scene of generatedScenes) {
+        const articleUrls = (articleByScene[scene.index] || []).slice(
+          0,
+          IMAGES_PER_SCENE,
+        );
+        const apiShots = shots.filter((s) => s.sceneIndex === scene.index);
+
+        type Shot = (typeof shots)[number];
+        const articleShots: Shot[] = articleUrls.map((url, i) => ({
+          sceneIndex: scene.index,
+          slot: -1,
+          role: "article",
+          roleLabel: "기사 원본",
+          query: "",
+          image: {
+            imageUrl: url,
+            sourceUrl: url,
+            siteName: "기사 원본",
+            title: `기사 이미지 ${i + 1}`,
+            thumbnailUrl: url,
+          },
+        }));
+
+        const final: Shot[] = [];
+
+        // Slot 0: 기사가 있으면 기사 우선
+        if (articleShots.length > 0) {
+          final.push(articleShots.shift()!);
+        } else if (apiShots.length > 0) {
+          // 기사 없으면 API 첫번째 결과를 임의로
+          const shuffledApi = shuffle(apiShots);
+          final.push(shuffledApi.shift()!);
+          apiShots.length = 0;
+          apiShots.push(...shuffledApi);
+        }
+
+        // Slot 1~4: 남은 기사 + 남은 API 셔플
+        const remaining = shuffle([...articleShots, ...apiShots]);
+        for (const r of remaining) {
+          if (final.length >= IMAGES_PER_SCENE) break;
+          final.push(r);
+        }
+
+        // slot 번호 0..N 으로 재할당
+        final.forEach((s, i) => {
+          s.slot = i;
+        });
+
+        if (final.length > 0) merged[scene.index] = final;
+      }
+
+      setShotlistByScene(merged);
+      syncToSelectedAssets(
+        sceneImages,
+        selectedGoogleImageUrls,
+        merged,
+        articleByScene,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setBusy(null);
+    }
   };
 
-  const assetLink = (a: WebSceneAsset): string => {
-    if (a.kind === "youtube-short") return a.watchUrl;
-    if (a.kind === "web-image") return a.sourceUrl;
-    return a.watchUrl;
+  const autoShotsForScene = async (sceneIndex: number) => {
+    setBusy(`shots-scene-${sceneIndex}`);
+    setError("");
+    try {
+      const shots = await callAutoShots({ mode: "scene", sceneIndex });
+      shots.sort((a, b) => a.slot - b.slot);
+      const next = { ...shotlistByScene, [sceneIndex]: shots };
+      setShotlistByScene(next);
+      syncToSelectedAssets(sceneImages, selectedGoogleImageUrls, next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setBusy(null);
+    }
   };
+
+  // 모든 씬에서 현재 사용 중인 이미지 URL / videoId 수집 (씬 간 중복 회피)
+  const collectGlobalUsage = () => {
+    const usedVideoIds = new Set<string>();
+    const usedImageUrls = new Set<string>();
+    for (const sceneShots of Object.values(shotlistByScene)) {
+      for (const sh of sceneShots) {
+        const img = sh.image;
+        if (!img) continue;
+        if (img.videoId) usedVideoIds.add(img.videoId);
+        else if (img.imageUrl) usedImageUrls.add(img.imageUrl);
+      }
+    }
+    return { usedVideoIds, usedImageUrls };
+  };
+
+  // 특정 씬-컷을 Bing 이미지 검색 결과로 교체 (중복 회피)
+  const webImageReplaceShot = async (sceneIndex: number, slot: number) => {
+    const list = shotlistByScene[sceneIndex] || [];
+    const target = list.find((x) => x.slot === slot);
+    if (!target) return;
+    const query = target.query || target.roleLabel || "";
+    if (!query) {
+      setError("이 컷에는 검색어가 없습니다.");
+      return;
+    }
+    const seenKey = `${sceneIndex}-${slot}`;
+    const seenList = seenByShot[seenKey] || [];
+    const { usedImageUrls } = collectGlobalUsage();
+    // 현재 박혀있는 이미지 URL + 이전에 본 거 + 다른 씬에서 쓰는 모든 이미지 URL
+    const currentUrl = target.image?.imageUrl;
+    const exclude = Array.from(
+      new Set([
+        ...seenList,
+        ...(currentUrl ? [currentUrl] : []),
+        ...usedImageUrls,
+      ]),
+    );
+
+    setBusy(`web-${sceneIndex}-${slot}`);
+    setError("");
+    try {
+      const res = await fetch("/api/search-web-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, limit: 1, exclude }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "이미지 검색 실패");
+      const img = (data.images || [])[0];
+      if (!img) throw new Error("더 이상 다른 결과가 없습니다.");
+
+      setSeenByShot((prev) => {
+        const list = prev[seenKey] || [];
+        return {
+          ...prev,
+          [seenKey]: Array.from(
+            new Set([...list, ...(currentUrl ? [currentUrl] : []), img.imageUrl]),
+          ),
+        };
+      });
+
+      setShotlistByScene((prev) => {
+        const cur = prev[sceneIndex] || [];
+        const idx = cur.findIndex((x) => x.slot === slot);
+        if (idx < 0) return prev;
+        const copy = [...cur];
+        copy[idx] = {
+          ...copy[idx],
+          image: {
+            imageUrl: img.imageUrl,
+            sourceUrl: img.sourceUrl,
+            siteName: img.siteName,
+            thumbnailUrl: img.thumbnailUrl,
+            title: img.title || target.roleLabel,
+          },
+        };
+        const next = { ...prev, [sceneIndex]: copy };
+        syncToSelectedAssets(
+          sceneImages,
+          selectedGoogleImageUrls,
+          next,
+          articleImagesByScene,
+        );
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // 특정 씬-컷을 AI로 교체 (shotlist의 image를 AI dataUrl로 덮어쓰기)
+  const aiReplaceShot = async (sceneIndex: number, slot: number) => {
+    const scene = generatedScenes.find((s) => s.index === sceneIndex);
+    if (!scene) return;
+    const list = shotlistByScene[sceneIndex] || [];
+    const target = list.find((x) => x.slot === slot);
+    setBusy(`ai-${sceneIndex}-${slot}`);
+    setError("");
+    try {
+      // shotlist의 roleLabel을 추가 컨텍스트로 — AI가 그 역할에 맞는 이미지 만들도록
+      const extraContext = target?.roleLabel
+        ? ` Visual focus: ${target.roleLabel}.`
+        : "";
+      const res = await fetch("/api/generate-scene-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "image",
+          scenes: generatedScenes.map((s) => ({
+            index: s.index,
+            text: s.text + extraContext,
+            emotion: s.emotion,
+            durationSec: s.durationSec,
+          })),
+          storyTopic,
+          storyPremise,
+          imagesPerScene: IMAGES_PER_SCENE,
+          sceneIndex,
+          slot,
+          // 매번 새 프롬프트 (역할에 맞춰)
+          styleGuide: styleGuide || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "AI 이미지 생성 실패");
+      if (data.styleGuide && !styleGuide) setStyleGuide(data.styleGuide);
+
+      const img = (data.images || [])[0];
+      if (!img || !img.dataUrl) throw new Error("AI 결과 없음");
+
+      // shotlist의 해당 슬롯 image를 AI로 교체
+      setShotlistByScene((prev) => {
+        const cur = prev[sceneIndex] || [];
+        const idx = cur.findIndex((x) => x.slot === slot);
+        const newImage = {
+          imageUrl: img.dataUrl,
+          sourceUrl: `ai://scene-${sceneIndex}-slot-${slot}`,
+          siteName: "AI 생성",
+          title: target?.roleLabel || `AI 컷 ${slot + 1}`,
+          thumbnailUrl: img.dataUrl,
+        };
+        let nextList: typeof cur;
+        if (idx >= 0) {
+          nextList = [...cur];
+          nextList[idx] = { ...nextList[idx], image: newImage };
+        } else {
+          // shotlist에 해당 슬롯 없으면 새로 추가
+          nextList = [
+            ...cur,
+            {
+              slot,
+              role: "ai",
+              roleLabel: "AI 생성 컷",
+              query: "",
+              image: newImage,
+            },
+          ].sort((a, b) => a.slot - b.slot);
+        }
+        const next = { ...prev, [sceneIndex]: nextList };
+        syncToSelectedAssets(
+          sceneImages,
+          selectedGoogleImageUrls,
+          next,
+          articleImagesByScene,
+        );
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // 🔄 스마트 새로고침 — 현재 슬롯 타입 유지 (이미지면 이미지, 영상이면 영상)
+  // 컷 타입을 알 수 없으면(빈 슬롯 등) 이미지 우선
+  const smartRefreshShot = async (sceneIndex: number, slot: number) => {
+    const list = shotlistByScene[sceneIndex] || [];
+    const target = list.find((x) => x.slot === slot);
+    const isVideo = !!target?.image?.videoId;
+    if (isVideo) {
+      await autoShotSingle(sceneIndex, slot);
+    } else {
+      await webImageReplaceShot(sceneIndex, slot);
+    }
+  };
+
+  const autoShotSingle = async (
+    sceneIndex: number,
+    slot: number,
+    customQuery?: string,
+  ) => {
+    const seenKey = `${sceneIndex}-${slot}`;
+    const existing = shotlistByScene[sceneIndex] || [];
+    const target = existing.find((x) => x.slot === slot);
+    const currentVideoId = target?.image?.videoId;
+    const seenList = seenByShot[seenKey] || [];
+    const { usedVideoIds } = collectGlobalUsage();
+    // 이전에 본 거 + 현재 컷 + 다른 모든 씬에서 사용 중인 videoId 제외
+    const excludeIds = Array.from(
+      new Set([
+        ...seenList,
+        ...(currentVideoId ? [currentVideoId] : []),
+        ...usedVideoIds,
+      ]),
+    );
+
+    setBusy(`shot-${sceneIndex}-${slot}`);
+    setError("");
+    try {
+      const shots = await callAutoShots({
+        mode: "shot",
+        sceneIndex,
+        slot,
+        customQuery,
+        excludeVideoIds: excludeIds,
+      });
+      const got = shots[0];
+      if (!got) throw new Error("결과 없음");
+      if (!got.image) throw new Error("더 이상 다른 결과가 없습니다.");
+
+      // seen에 새 결과 추가
+      const newId = got.image.videoId || got.image.imageUrl;
+      if (newId) {
+        setSeenByShot((prev) => ({
+          ...prev,
+          [seenKey]: Array.from(
+            new Set([
+              ...(prev[seenKey] || []),
+              ...(currentVideoId ? [currentVideoId] : []),
+              newId,
+            ]),
+          ),
+        }));
+      }
+
+      const updated = (() => {
+        const idx = existing.findIndex((x) => x.slot === slot);
+        if (idx >= 0) {
+          const copy = [...existing];
+          copy[idx] = got;
+          return copy;
+        }
+        return [...existing, got].sort((a, b) => a.slot - b.slot);
+      })();
+      const next = { ...shotlistByScene, [sceneIndex]: updated };
+      setShotlistByScene(next);
+      syncToSelectedAssets(
+        sceneImages,
+        selectedGoogleImageUrls,
+        next,
+        articleImagesByScene,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // 한 씬의 구글 이미지 검색 — customQueries 있으면 그걸 쓰고, 아니면 AI가 추출
+  const searchGoogleImages = async (
+    sceneIndex: number,
+    customQueries?: string[],
+  ) => {
+    const scene = generatedScenes[sceneIndex];
+    if (!scene) return;
+    setBusy(`google-${sceneIndex}`);
+    setError("");
+    try {
+      const res = await fetch("/api/search-scene-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sceneText: scene.text,
+          storyTopic,
+          limit: 8,
+          queries: customQueries && customQueries.length > 0
+            ? customQueries
+            : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Pexels 이미지 검색 실패");
+      setGoogleSceneImages((prev) => ({
+        ...prev,
+        [sceneIndex]: data.images || [],
+      }));
+      setGoogleQueriesByScene((prev) => ({
+        ...prev,
+        [sceneIndex]: data.queries || [],
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // 모든 씬 구글 이미지 일괄 검색 (병렬)
+  const searchGoogleAll = async () => {
+    if (generatedScenes.length === 0) return;
+    setBusy("google-all");
+    setError("");
+    try {
+      const results = await Promise.all(
+        generatedScenes.map(async (s) => {
+          const res = await fetch("/api/search-scene-images", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sceneText: s.text,
+              storyTopic,
+              limit: 8,
+            }),
+          });
+          const data = await res.json();
+          return {
+            sceneIndex: s.index,
+            images: data.images || [],
+            queries: data.queries || [],
+          };
+        }),
+      );
+      const nextImages: typeof googleSceneImages = {};
+      const nextQueries: typeof googleQueriesByScene = {};
+      for (const r of results) {
+        nextImages[r.sceneIndex] = r.images;
+        nextQueries[r.sceneIndex] = r.queries;
+      }
+      setGoogleSceneImages(nextImages);
+      setGoogleQueriesByScene(nextQueries);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // 씬별 검색어 편집 → 그 검색어로 다시 검색
+  const searchWithCustomQueries = (sceneIndex: number) => {
+    const draft = (queryDraftByScene[sceneIndex] || "").trim();
+    if (!draft) return;
+    const queries = draft
+      .split(/[,，\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (queries.length === 0) return;
+    setQueryDraftByScene((prev) => ({ ...prev, [sceneIndex]: "" }));
+    searchGoogleImages(sceneIndex, queries);
+  };
+
+  const toggleGoogleImage = (sceneIndex: number, imageUrl: string) => {
+    setSelectedGoogleImageUrls((prev) => {
+      const list = prev[sceneIndex] || [];
+      const next = list.includes(imageUrl)
+        ? list.filter((u) => u !== imageUrl)
+        : [...list, imageUrl];
+      const updated = { ...prev, [sceneIndex]: next };
+      // sceneImages는 그대로, 선택만 변경
+      syncToSelectedAssets(sceneImages, updated);
+      return updated;
+    });
+  };
+
+  const generateAll = async () => {
+    if (generatedScenes.length === 0) return;
+    setBusy("all");
+    setError("");
+    // 새 배치 — 스타일·프롬프트·앵커·이미지 모두 리셋해서 완전히 새로 짜기
+    setAnchorImageUrl("");
+    setSceneImages({});
+    setStyleGuide("");
+    setScenePrompts({});
+    try {
+      const data = await callGen({
+        mode: "all",
+        scenes: generatedScenes,
+        freshPrompts: true,
+      });
+      applyResults(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const regenerateScene = async (sceneIndex: number) => {
+    setBusy(`scene-${sceneIndex}`);
+    setError("");
+    try {
+      const data = await callGen({
+        mode: "scene",
+        scenes: generatedScenes,
+        sceneIndex,
+      });
+      applyResults(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const regenerateImage = async (sceneIndex: number, slot: number) => {
+    setBusy(`image-${sceneIndex}-${slot}`);
+    setError("");
+    try {
+      const data = await callGen({
+        mode: "image",
+        scenes: generatedScenes,
+        sceneIndex,
+        slot,
+      });
+      applyResults(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const totalGenerated = Object.values(sceneImages).reduce(
+    (acc, slots) => acc + slots.filter((s) => !!s).length,
+    0,
+  );
+  const totalNeeded = generatedScenes.length * IMAGES_PER_SCENE;
 
   return (
     <div className="space-y-6">
@@ -182,8 +952,8 @@ export default function AnalyzePage() {
           >
             0단계 썰 라이브러리
           </Link>
-          에서 선택하면 자동 입력. 대본 생성 후 각 씬마다 YouTube /
-          쇼핑이미지 / TikTok에서 소재를 가져와서 고를 수 있어요.
+          에서 선택하면 자동 입력. 대본 생성 후 씬별 AI 이미지를 일괄
+          생성합니다.
         </p>
 
         {storyAngleData && (
@@ -246,6 +1016,28 @@ export default function AnalyzePage() {
         </div>
       </section>
 
+      {/* 영상 어그로 제목 (편집 가능) */}
+      {videoTitle && (
+        <section className="bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-950/20 dark:to-orange-950/20 border border-red-300 dark:border-red-900/50 rounded-xl p-4">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="text-xs font-bold text-red-600 dark:text-red-400">
+              🔥 영상 제목 (어그로 후크) — 영상 헤더에 자동 적용
+            </div>
+            <span className="text-[10px] text-zinc-500">{videoTitle.length}자</span>
+          </div>
+          <input
+            type="text"
+            value={videoTitle}
+            onChange={(e) => setVideoTitle(e.target.value)}
+            className="w-full bg-white dark:bg-zinc-950 border border-red-300 dark:border-red-900 rounded-lg px-3 py-2 text-sm font-bold leading-snug"
+          />
+          <p className="mt-1.5 text-[10px] text-zinc-500">
+            마음에 안 들면 직접 수정하세요. finalize 페이지의 헤더 텍스트로
+            자동 입력됩니다.
+          </p>
+        </section>
+      )}
+
       {/* 스토리 프레미스 */}
       {storyPremise && (
         <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
@@ -256,14 +1048,62 @@ export default function AnalyzePage() {
         </section>
       )}
 
-      {/* 대본 + 씬별 소재 */}
+      {/* 전체 이미지 생성 */}
       {generatedScenes.length > 0 && (
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* 왼쪽: 씬 리스트 */}
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 space-y-2">
+        <section className="bg-gradient-to-br from-emerald-50 to-purple-50 dark:from-emerald-950/20 dark:to-purple-950/20 border border-emerald-200 dark:border-emerald-900/50 rounded-xl p-5">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="font-semibold text-sm">
+                🎯 씬별 컷 일괄 생성
+              </h3>
+              <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1">
+                씬 {generatedScenes.length}개 × {IMAGES_PER_SCENE}컷 = 총{" "}
+                {generatedScenes.length * IMAGES_PER_SCENE}컷.{" "}
+                {articleSourceUrl
+                  ? "기사 URL 이미지를 우선 배치하고, 나머지는 YouTube 클립으로 채움. "
+                  : "AI가 각 컷 역할 정해서 YouTube에서 영상 찾아 배치. "}
+                컷마다 🎨 = AI 생성, 🖼️ = 뉴스/웹 이미지 (Bing 검색), 🔄 =
+                YouTube 다시. 영상에 마우스 올리면 자동 재생.
+              </p>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={autoShotsAll}
+                disabled={busy !== null}
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-400 text-white font-semibold text-sm px-4 py-2 rounded-lg"
+              >
+                {busy === "shots-all"
+                  ? "🎯 분석 중..."
+                  : Object.keys(shotlistByScene).length > 0
+                    ? "🔄 컷 일괄 다시"
+                    : "🎯 컷 일괄 생성 (씬당 5컷)"}
+              </button>
+            </div>
+          </div>
+          {styleGuide && (
+            <details className="mt-3 text-xs">
+              <summary className="cursor-pointer text-purple-700 dark:text-purple-300 font-medium">
+                📐 적용된 스타일 가이드
+              </summary>
+              <p className="mt-2 text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap leading-relaxed">
+                {styleGuide}
+              </p>
+            </details>
+          )}
+        </section>
+      )}
+
+      {/* 대본 + 씬별 이미지 */}
+      {generatedScenes.length > 0 && (
+        <section className="space-y-4">
+          {/* 위: 씬 리스트 (가로 배열로 컴팩트하게) */}
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
             <h3 className="font-semibold mb-2">🎬 씬별 대본</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-2">
             {generatedScenes.map((s) => {
-              const selectedList = selectedSceneAssets[s.index] || [];
+              const slots = sceneImages[s.index] || [];
+              const filled = slots.filter((u) => !!u).length;
               const isActive = activeSceneIndex === s.index;
               return (
                 <button
@@ -272,7 +1112,7 @@ export default function AnalyzePage() {
                   onClick={() => setActiveSceneIndex(s.index)}
                   className={`w-full text-left border rounded-lg p-3 transition-colors ${
                     isActive
-                      ? "border-red-500 bg-red-50 dark:bg-red-950/20"
+                      ? "border-purple-500 bg-purple-50 dark:bg-purple-950/20"
                       : "border-zinc-200 dark:border-zinc-800 hover:border-zinc-400"
                   }`}
                 >
@@ -284,239 +1124,250 @@ export default function AnalyzePage() {
                       <span className="text-zinc-400">·</span>
                       <span className="text-red-500">{s.emotion}</span>
                     </div>
-                    {selectedList.length > 0 ? (
+                    {filled > 0 ? (
                       <span className="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded">
-                        ✅ 소재 {selectedList.length}개 선택
+                        🎨 {filled}/{IMAGES_PER_SCENE}장
                       </span>
                     ) : (
                       <span className="text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 px-2 py-0.5 rounded">
-                        소재 없음
+                        미생성
                       </span>
                     )}
                   </div>
                   <p className="text-sm leading-snug">{s.text}</p>
-                  {selectedList.length > 0 && (
+                  {filled > 0 && (
                     <div className="mt-2 flex gap-1 overflow-x-auto">
-                      {selectedList.map((sel, i) => (
-                        <div
-                          key={`${assetKey(sel)}-${i}`}
-                          className="relative shrink-0"
-                          title={assetLabel(sel)}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                      {slots.map((url, i) =>
+                        url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
                           <img
-                            src={assetThumb(sel)}
+                            key={i}
+                            src={url}
                             alt=""
-                            className="w-10 h-10 object-cover rounded bg-zinc-100 dark:bg-zinc-800"
+                            className="w-10 h-[60px] object-cover rounded bg-zinc-100 dark:bg-zinc-800 shrink-0"
                           />
-                          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] rounded-full w-3.5 h-3.5 flex items-center justify-center">
-                            {i + 1}
-                          </span>
-                        </div>
-                      ))}
+                        ) : null,
+                      )}
                     </div>
                   )}
                 </button>
               );
             })}
+            </div>
           </div>
 
-          {/* 오른쪽: 선택된 씬의 소재 패널 */}
+          {/* 아래: 선택된 씬의 이미지 패널 */}
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
             {activeSceneIndex === null ? (
               <div className="text-sm text-zinc-500 py-8 text-center">
-                왼쪽에서 씬을 선택하면 소재 후보가 여기 표시됩니다.
+                위에서 씬을 선택하면 컷이 여기 표시됩니다.
               </div>
             ) : (
               (() => {
                 const scene = generatedScenes[activeSceneIndex];
-                const assets = fetchedSceneAssets[activeSceneIndex] || [];
-                const selectedList =
-                  selectedSceneAssets[activeSceneIndex] || [];
                 return (
                   <div>
-                    <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center justify-between mb-2">
                       <h3 className="font-semibold text-sm">
-                        씬 {activeSceneIndex + 1} 소재 ({selectedList.length}{" "}
-                        선택됨)
+                        씬 {activeSceneIndex + 1} 컷 ({IMAGES_PER_SCENE}개)
                       </h3>
-                      <div className="flex gap-1">
-                        <button
-                          type="button"
-                          onClick={() => fetchAssetsForScene(activeSceneIndex)}
-                          disabled={fetchingSceneIndex !== null}
-                          className="text-xs bg-sky-600 hover:bg-sky-700 disabled:bg-zinc-400 text-white px-3 py-1.5 rounded-lg"
-                        >
-                          {fetchingSceneIndex === activeSceneIndex
-                            ? "검색 중..."
-                            : assets.length === 0
-                              ? "🔍 소재 찾기"
-                              : "🔄 다시 찾기"}
-                        </button>
-                        {selectedList.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => clearAssets(activeSceneIndex)}
-                            className="text-xs bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 px-2 py-1.5 rounded-lg"
-                          >
-                            전부 해제
-                          </button>
-                        )}
-                      </div>
                     </div>
                     <p className="text-xs text-zinc-600 dark:text-zinc-400 mb-3 italic">
                       &ldquo;{scene?.text}&rdquo;
                     </p>
-                    <p className="text-xs text-zinc-500 mb-2">
-                      🎬 YouTube 영상 8개 · 🖼 이미지 6개 · 🎵 TikTok 3개 (가능 시) ·
-                      여러 개 선택 가능. 한국 채널은 자동 배제.
-                    </p>
-                    {queriesBySceneIndex[activeSceneIndex] && (
-                      <div className="mb-3 text-[10px] text-zinc-500 space-y-0.5">
-                        <div>
-                          🎬 영상 검색어:{" "}
-                          {queriesBySceneIndex[
-                            activeSceneIndex
-                          ].videoQueries.map((q, i) => (
-                            <code
-                              key={i}
-                              className="px-1 mr-1 bg-zinc-100 dark:bg-zinc-800 rounded"
-                            >
-                              {q}
-                            </code>
-                          ))}
-                        </div>
-                        <div>
-                          🖼 이미지 검색어:{" "}
-                          {queriesBySceneIndex[
-                            activeSceneIndex
-                          ].imageQueries.map((q, i) => (
-                            <code
-                              key={i}
-                              className="px-1 mr-1 bg-zinc-100 dark:bg-zinc-800 rounded"
-                            >
-                              {q}
-                            </code>
-                          ))}
-                        </div>
-                      </div>
-                    )}
 
-                    {assets.length === 0 ? (
-                      <div className="text-sm text-zinc-500 py-6 text-center">
-                        {fetchingSceneIndex === activeSceneIndex
-                          ? "YouTube · 쇼핑 페이지 · TikTok 검색 중..."
-                          : "아직 소재를 찾지 않았습니다. 위 버튼을 눌러주세요."}
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                        {assets.map((a, idx) => {
-                          const thumb = assetThumb(a);
-                          const isSelected = isAssetSelected(
-                            activeSceneIndex,
-                            a,
-                          );
-                          const selectionOrder = isSelected
-                            ? selectedList.findIndex(
-                                (sel) => assetKey(sel) === assetKey(a),
-                              ) + 1
-                            : 0;
-                          const k = assetKey(a);
-                          const isHovered = hoveredAssetKey === k;
-                          const isVideo =
-                            a.kind === "youtube-short" || a.kind === "tiktok";
-                          const previewUrl =
-                            a.kind === "youtube-short"
-                              ? `https://www.youtube-nocookie.com/embed/${a.videoId}?autoplay=1&mute=1&controls=0&loop=1&playlist=${a.videoId}&modestbranding=1&rel=0`
-                              : a.kind === "tiktok"
-                                ? `https://www.tiktok.com/embed/v2/${a.videoId}?autoplay=1&music_info=0`
-                                : "";
-                          return (
-                            <div
-                              key={`${a.kind}-${idx}`}
-                              role="button"
-                              tabIndex={0}
-                              onClick={() =>
-                                toggleAsset(activeSceneIndex, a)
-                              }
-                              onMouseEnter={() => setHoveredAssetKey(k)}
-                              onMouseLeave={() =>
-                                setHoveredAssetKey((cur) =>
-                                  cur === k ? null : cur,
-                                )
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  toggleAsset(activeSceneIndex, a);
-                                }
-                              }}
-                              className={`relative text-left border rounded-lg overflow-hidden cursor-pointer hover:border-red-400 ${
-                                isSelected
-                                  ? "border-red-500 ring-2 ring-red-500"
-                                  : "border-zinc-200 dark:border-zinc-800"
-                              }`}
+                    {/* 자동 컷 구성 결과 (역할 기반 ordered shotlist — 기사 이미지 + Pexels 통합) */}
+                    {(() => {
+                      const list = shotlistByScene[activeSceneIndex] || [];
+                      const sceneShotsBusy =
+                        busy === `shots-scene-${activeSceneIndex}` ||
+                        busy === "shots-all";
+                      if (list.length === 0 && !sceneShotsBusy) return null;
+                      return (
+                        <div className="mb-4 border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/50 dark:bg-emerald-950/10 rounded-lg p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                              🎯 자동 컷 구성 (역할 기반)
+                            </h4>
+                            <button
+                              type="button"
+                              onClick={() => autoShotsForScene(activeSceneIndex)}
+                              disabled={busy !== null}
+                              className="text-[11px] bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-400 text-white px-2.5 py-1 rounded"
                             >
-                              <div className="relative w-full aspect-[9/16] bg-zinc-100 dark:bg-zinc-800">
-                                {isHovered && isVideo && previewUrl ? (
-                                  <iframe
-                                    src={previewUrl}
-                                    title="preview"
-                                    allow="autoplay; encrypted-media"
-                                    className="absolute inset-0 w-full h-full pointer-events-none"
-                                  />
-                                ) : (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img
-                                    src={thumb}
-                                    alt=""
-                                    className="absolute inset-0 w-full h-full object-cover"
-                                  />
-                                )}
-                                {isVideo && !isHovered && (
-                                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                    <div className="bg-black/50 rounded-full w-9 h-9 flex items-center justify-center text-white text-base">
-                                      ▶
+                              {sceneShotsBusy ? "🎯 분석 중..." : "🔄 이 씬 다시"}
+                            </button>
+                          </div>
+                          {sceneShotsBusy && list.length === 0 ? (
+                            <p className="text-[11px] text-zinc-500 py-3 text-center">
+                              씬 분석 중...
+                            </p>
+                          ) : (
+                            <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+                              {list.map((s) => {
+                                const pexelsBusy =
+                                  busy === `shot-${activeSceneIndex}-${s.slot}`;
+                                const aiBusy =
+                                  busy ===
+                                  `ai-${activeSceneIndex}-${s.slot}`;
+                                const webBusy =
+                                  busy ===
+                                  `web-${activeSceneIndex}-${s.slot}`;
+                                const cellBusy = pexelsBusy || aiBusy || webBusy;
+                                const isAi = s.role === "ai";
+                                const isArticle = s.role === "article";
+                                const isVideo = !!s.image?.videoId;
+                                const isHovered =
+                                  hoveredAssetKey ===
+                                  `shot-${activeSceneIndex}-${s.slot}`;
+                                return (
+                                  <div
+                                    key={s.slot}
+                                    onMouseEnter={() =>
+                                      setHoveredAssetKey(
+                                        `shot-${activeSceneIndex}-${s.slot}`,
+                                      )
+                                    }
+                                    onMouseLeave={() =>
+                                      setHoveredAssetKey((c) =>
+                                        c ===
+                                        `shot-${activeSceneIndex}-${s.slot}`
+                                          ? null
+                                          : c,
+                                      )
+                                    }
+                                    className={`relative border rounded-lg overflow-hidden bg-zinc-100 dark:bg-zinc-800 ${
+                                      isAi
+                                        ? "border-purple-400 dark:border-purple-700"
+                                        : isArticle
+                                          ? "border-amber-400 dark:border-amber-700"
+                                          : "border-emerald-300 dark:border-emerald-800"
+                                    }`}
+                                  >
+                                    <div className="relative w-full aspect-[9/16]">
+                                      {s.image ? (
+                                        isHovered &&
+                                        isVideo &&
+                                        s.image.embedUrl ? (
+                                          <iframe
+                                            src={`${s.image.embedUrl}?autoplay=1&mute=1&controls=0&loop=1&playlist=${s.image.videoId}&modestbranding=1&rel=0`}
+                                            title="preview"
+                                            allow="autoplay; encrypted-media"
+                                            className="absolute inset-0 w-full h-full pointer-events-none"
+                                          />
+                                        ) : (
+                                          // eslint-disable-next-line @next/next/no-img-element
+                                          <img
+                                            src={
+                                              s.image.thumbnailUrl ||
+                                              s.image.imageUrl
+                                            }
+                                            alt={s.roleLabel}
+                                            loading="lazy"
+                                            className="absolute inset-0 w-full h-full object-cover"
+                                          />
+                                        )
+                                      ) : (
+                                        <div className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-400">
+                                          {cellBusy
+                                            ? aiBusy
+                                              ? "🎨 생성 중..."
+                                              : "🎯 검색 중..."
+                                            : "이미지 없음"}
+                                        </div>
+                                      )}
+                                      {isVideo && !isHovered && !cellBusy && (
+                                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                          <div className="bg-black/60 rounded-full w-7 h-7 flex items-center justify-center text-white text-xs">
+                                            ▶
+                                          </div>
+                                        </div>
+                                      )}
+                                      {cellBusy && (
+                                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-[10px] text-white">
+                                          {aiBusy
+                                            ? "🎨 AI 생성 중..."
+                                            : webBusy
+                                              ? "🖼️ 웹 검색 중..."
+                                              : "🎯 검색 중..."}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div
+                                      className={`absolute top-1 left-1 text-white text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                                        isAi
+                                          ? "bg-purple-600"
+                                          : isArticle
+                                            ? "bg-amber-600"
+                                            : "bg-emerald-600"
+                                      }`}
+                                    >
+                                      {s.slot + 1}.{" "}
+                                      {isAi ? "AI" : isArticle ? "📰" : s.role}
+                                    </div>
+                                    <div className="absolute top-1.5 right-1.5 flex gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          aiReplaceShot(
+                                            activeSceneIndex,
+                                            s.slot,
+                                          )
+                                        }
+                                        disabled={busy !== null}
+                                        className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-base px-2.5 py-1.5 rounded-md shadow-md"
+                                        title="이 컷을 AI로 생성/교체"
+                                      >
+                                        🎨
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          webImageReplaceShot(
+                                            activeSceneIndex,
+                                            s.slot,
+                                          )
+                                        }
+                                        disabled={busy !== null}
+                                        className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-base px-2.5 py-1.5 rounded-md shadow-md"
+                                        title="웹 이미지 (뉴스/블로그) 로 교체 — 누를 때마다 다른 이미지"
+                                      >
+                                        🖼️
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          smartRefreshShot(
+                                            activeSceneIndex,
+                                            s.slot,
+                                          )
+                                        }
+                                        disabled={busy !== null}
+                                        className="bg-black/80 hover:bg-black disabled:opacity-50 text-white text-base px-2.5 py-1.5 rounded-md shadow-md"
+                                        title="이 컷 새로고침 — 이미지 컷은 이미지로, 영상 컷은 영상으로"
+                                      >
+                                        🔄
+                                      </button>
+                                    </div>
+                                    <div className="px-1.5 py-1 bg-zinc-900/90 text-white text-[9px] leading-tight">
+                                      <div className="font-medium truncate">
+                                        {s.roleLabel}
+                                      </div>
+                                      {s.query && (
+                                        <div className="text-zinc-300 truncate font-mono">
+                                          {s.query}
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
-                                )}
-                              </div>
-                              <div className="absolute top-1 left-1 text-[9px] bg-black/70 text-white px-1.5 py-0.5 rounded">
-                                {assetLabel(a)}
-                              </div>
-                              {isSelected && (
-                                <div className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold">
-                                  {selectionOrder}
-                                </div>
-                              )}
-                              <div className="p-1.5">
-                                <div className="text-[10px] line-clamp-2 leading-tight">
-                                  {a.kind === "youtube-short"
-                                    ? a.title
-                                    : a.kind === "web-image"
-                                      ? a.title || a.siteName
-                                      : a.title || "TikTok 영상"}
-                                </div>
-                                <div className="text-[9px] text-zinc-500 mt-0.5 flex items-center justify-between">
-                                  <span className="truncate">
-                                    {assetSource(a)}
-                                  </span>
-                                  <a
-                                    href={assetLink(a)}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="text-blue-500 hover:underline shrink-0 ml-1"
-                                  >
-                                    원본 ↗
-                                  </a>
-                                </div>
-                              </div>
+                                );
+                              })}
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                          )}
+                        </div>
+                      );
+                    })()}
+
                   </div>
                 );
               })()
