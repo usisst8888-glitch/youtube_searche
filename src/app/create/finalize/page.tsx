@@ -294,9 +294,20 @@ export default function FinalizePage() {
               zip.file(`${sceneDir}/${clipPrefix}.mp4`, bytes);
             }
           } catch (e) {
+            const actualUrl =
+              a.kind === "youtube-short"
+                ? a.watchUrl
+                : a.kind === "web-image"
+                  ? a.imageUrl
+                  : a.kind === "tiktok"
+                    ? a.playUrl || a.watchUrl
+                    : "";
             zip.file(
               `${sceneDir}/${clipPrefix}-FAILED.txt`,
-              `다운로드 실패: ${e instanceof Error ? e.message : "오류"}\n원본 URL: ${assetOriginalUrl(a)}`,
+              `다운로드 실패: ${e instanceof Error ? e.message : "오류"}\n` +
+                `다운로드 시도 URL: ${actualUrl}\n` +
+                `원본(소스) URL: ${assetOriginalUrl(a)}\n` +
+                `종류: ${a.kind}`,
             );
           }
         }

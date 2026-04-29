@@ -23,8 +23,27 @@ export async function GET(req: NextRequest) {
   let referer: string | undefined;
   try {
     const u = new URL(url);
-    if (u.hostname.includes("jjalbang.today")) {
-      referer = "https://www.jjalbang.today/";
+    // 호스트별 referer 매핑 (hotlink 차단 우회)
+    const REFERER_MAP: { test: RegExp; ref: string }[] = [
+      { test: /jjalbang\.today/, ref: "https://www.jjalbang.today/" },
+      { test: /hellomarket\.com/, ref: "https://www.hellomarket.com/" },
+      { test: /11st\.co\.kr/, ref: "https://www.11st.co.kr/" },
+      { test: /coupang/, ref: "https://www.coupang.com/" },
+      { test: /naver\.(net|com)/, ref: "https://www.naver.com/" },
+      { test: /pstatic\.net/, ref: "https://www.naver.com/" },
+      { test: /daum/, ref: "https://www.daum.net/" },
+      { test: /kakaocdn\.net/, ref: "https://www.kakao.com/" },
+      { test: /tistory/, ref: "https://www.tistory.com/" },
+    ];
+    for (const r of REFERER_MAP) {
+      if (r.test.test(u.hostname)) {
+        referer = r.ref;
+        break;
+      }
+    }
+    // fallback: 같은 도메인 referer
+    if (!referer) {
+      referer = `${u.protocol}//${u.hostname}/`;
     }
   } catch {}
 
