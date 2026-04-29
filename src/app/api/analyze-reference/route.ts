@@ -129,6 +129,41 @@ function buildResearchPrompt(productName: string): string {
 - 10줄 이내, 마크다운`;
 }
 
+const TONE_RULES = `## 🗣️ 말투 — 요요체 (반말존대) 필수
+
+모든 문장은 **요체 (-요, -아요, -어요, -네요, -죠, -군요)** 로 끝나야 합니다.
+**~다 / ~ㅂ니다 / ~습니다 / ~니다** 같은 격식체는 **절대 금지**.
+
+### ✅ 좋은 예 (요체)
+- "이 과학이 윤조에센스를 탄생시켰어요"
+- "근데 사실은 더 충격적인 게 있어요"
+- "다들 모르는 진짜 이유가 있더라고요"
+- "결국 진태현 씨가 떠난 거예요"
+- "이게 말이 되는 건가요?"
+- "충격받았죠?"
+
+### ❌ 나쁜 예 (~다 / 격식체)
+- "탄생시켰습니다" → "탄생시켰어요"
+- "있습니다" → "있어요"
+- "이상합니다" → "이상해요"
+- "떠났다" → "떠났어요"
+- "추측됩니다" → "추측되네요"
+- "맞습니다" → "맞죠"
+
+### 변환 표
+| ❌ 격식 | ✅ 요체 |
+|---|---|
+| ~합니다 | ~해요 |
+| ~입니다 | ~예요 / ~이에요 |
+| ~있습니다 | ~있어요 |
+| ~했습니다 | ~했어요 |
+| ~됩니다 | ~돼요 / ~되네요 |
+| ~한다 | ~해요 |
+| ~이다 | ~예요 |
+
+⚠️ 인용문이나 외친 대사 안의 ~다는 OK (예: "끝났다"라고 외쳤어요).
+일반 서술 문장은 모두 요체로.`;
+
 const CURIOSITY_LOOP_RULES = `## 🔥 호기심 4단계 루프 — 시청자 retention 극대화 구조
 
 이 4단계는 **순차로 흘러가면서 매 씬마다 "다음 씬 안 보면 못 배김"** 만드는 구조입니다.
@@ -200,6 +235,8 @@ ${sources && sources.length > 0 ? `출처:\n${sources.map((u) => `- ${u}`).join(
 8. 구어체 내레이션. 마케팅 톤 ❌. 평가어 ("좋다/편하다") ❌.
 9. 제품명은 **0~1번만** 언급.
 
+${TONE_RULES}
+
 ${CURIOSITY_LOOP_RULES}
 
 ${AGGRO_TITLE_RULES}
@@ -207,10 +244,11 @@ ${AGGRO_TITLE_RULES}
 ## 출력 JSON
 
 - **videoTitle**: 어그로 후크 제목
-- storyPremise: 4단계 루프를 어떻게 풀지 2~3줄로
-- newScenes: **정확히 4씬** (index 0~3, durationSec 10, emotion = 단계 이름, text 80~120자)
+- storyPremise: 4단계 루프를 어떻게 풀지 2~3줄로 (요체)
+- newScenes: **정확히 4씬** (index 0~3, durationSec 10, emotion = 단계 이름, text 80~120자, **모든 문장 요체**)
   - 씬 1~3 끝에 cliffhanger 필수
-  - 씬 4는 반전으로 종료, 마무리 멘트 X`;
+  - 씬 4는 반전으로 종료, 마무리 멘트 X
+  - ~다 / ~습니다 절대 금지`;
 }
 
 function buildScriptPromptFreeform(
@@ -234,6 +272,9 @@ ${research}
 - 정답/반전은 **씬 4** 에서만. 씬 1~3 에서 미리 풀지 말 것.
 - 씬 1~3 끝에 **cliffhanger** 필수. 씬 4는 반전으로 종료 (마무리 멘트 X).
 - 제품명 0~1번만.
+- ~다 / ~습니다 끝 절대 금지 — 모두 요체 (~요/~어요/~죠).
+
+${TONE_RULES}
 
 ${CURIOSITY_LOOP_RULES}
 
@@ -241,8 +282,8 @@ ${AGGRO_TITLE_RULES}
 
 ## 출력 JSON
 - **videoTitle**: 어그로 후크 제목 (위 규칙대로 자극적이게)
-- storyPremise (2~3줄)
-- newScenes: **정확히 4씬** (index 0~3, durationSec 10, emotion = 단계 이름, 씬 1~3 끝 cliffhanger, 씬 4는 반전 종료)`;
+- storyPremise (2~3줄, 요체)
+- newScenes: **정확히 4씬** (index 0~3, durationSec 10, emotion = 단계 이름, 씬 1~3 끝 cliffhanger, 씬 4는 반전 종료, **모든 문장 요체**)`;
 }
 
 export async function POST(req: NextRequest) {
@@ -347,10 +388,42 @@ export async function POST(req: NextRequest) {
 
     const parsed = JSON.parse(text);
 
+    // 안전장치: ~다 / ~습니다 끝맺음 자동 변환 (Gemini가 까먹는 경우)
+    const koreanizeYoche = (s: string): string => {
+      if (typeof s !== "string") return s;
+      // 가장 흔한 격식 종결 → 요체 매핑
+      const replacements: [RegExp, string][] = [
+        [/했습니다([.!?…]?)/g, "했어요$1"],
+        [/입니다([.!?…]?)/g, "이에요$1"],
+        [/합니다([.!?…]?)/g, "해요$1"],
+        [/됩니다([.!?…]?)/g, "돼요$1"],
+        [/있습니다([.!?…]?)/g, "있어요$1"],
+        [/없습니다([.!?…]?)/g, "없어요$1"],
+        [/같습니다([.!?…]?)/g, "같아요$1"],
+        [/그렇습니다([.!?…]?)/g, "그래요$1"],
+        [/아닙니다([.!?…]?)/g, "아니에요$1"],
+        [/입니까([.!?…]?)/g, "예요$1"],
+        [/습니까([.!?…]?)/g, "어요$1"],
+        // 일반화 — 어절 끝 ~ㅂ니다/~습니다
+        [/(\S)습니다([.!?…\s]|$)/g, "$1어요$2"],
+        [/(\S)ㅂ니다([.!?…\s]|$)/g, "$1요$2"],
+      ];
+      let out = s;
+      for (const [re, rep] of replacements) out = out.replace(re, rep);
+      return out;
+    };
+
+    const transformedScenes = (parsed.newScenes || []).map(
+      (sc: { text?: string; [k: string]: unknown }) => ({
+        ...sc,
+        text: koreanizeYoche(sc.text || ""),
+      }),
+    );
+
     return NextResponse.json({
       videoTitle: parsed.videoTitle || "",
-      storyPremise: parsed.storyPremise,
-      scenes: parsed.newScenes,
+      storyPremise: koreanizeYoche(parsed.storyPremise || ""),
+      scenes: transformedScenes,
       productResearch: research,
       usedAngle: !!angleData,
     });

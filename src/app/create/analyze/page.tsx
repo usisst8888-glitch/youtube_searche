@@ -4,11 +4,11 @@ import { useState } from "react";
 import Link from "next/link";
 import { useProject, WebSceneAsset, SceneScript } from "../context";
 
-const IMAGES_PER_SCENE = 7;
-// 7컷 패턴: [main, main, 짤, main, main, 짤, main]
-const JJAL_SLOTS = new Set<number>([2, 5]);
-const MAIN_COUNT = 5; // 7 - 2 짤
-const IMAGE_MAIN_SLOTS = 5; // 메인 5개 모두 이미지 (YouTube 영상 제거)
+const IMAGES_PER_SCENE = 4;
+// 4컷 패턴: [image, image, 짤, image]
+const JJAL_SLOTS = new Set<number>([2]);
+const MAIN_COUNT = 3; // 4 - 1 짤
+const IMAGE_MAIN_SLOTS = 3; // 메인 3개 모두 이미지
 const VIDEO_MAIN_SLOTS = 0;
 
 type GenItem = {
@@ -561,7 +561,7 @@ export default function AnalyzePage() {
           },
         }));
 
-        // 메인 풀 만들기 (5개)
+        // 메인 풀 만들기 (3개)
         const mainPool: Shot[] = [];
         if (articleShots.length > 0) {
           mainPool.push(articleShots.shift()!); // 첫 기사 = slot 0
@@ -1272,11 +1272,10 @@ export default function AnalyzePage() {
                 🎯 씬별 컷 일괄 생성
               </h3>
               <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1">
-                씬 {generatedScenes.length}개 × {IMAGES_PER_SCENE}컷 (메인
-                이미지 5 + 짤 2) = 총{" "}
-                {generatedScenes.length * IMAGES_PER_SCENE}컷. 패턴:{" "}
-                <code>이미지 · 이미지 · 🤣 · 이미지 · 이미지 · 🤣 · 이미지</code>.
-                컷마다 🎨 AI · 🖼️ 웹이미지 · 🤣 짤 · 🔄 새로고침.
+                씬 {generatedScenes.length}개 × {IMAGES_PER_SCENE}컷 (이미지 3
+                + 짤 1) = 총 {generatedScenes.length * IMAGES_PER_SCENE}컷.
+                패턴: <code>이미지 · 이미지 · 🤣 · 이미지</code>. 컷마다 🎨 AI ·
+                🖼️ 웹이미지 · 🤣 짤 · 🔄 새로고침.
               </p>
             </div>
             <div className="flex gap-2 flex-wrap">
@@ -1290,7 +1289,7 @@ export default function AnalyzePage() {
                   ? "🎯 분석 중..."
                   : Object.keys(shotlistByScene).length > 0
                     ? "🔄 컷 일괄 다시"
-                    : "🎯 컷 일괄 생성 (씬당 7컷)"}
+                    : "🎯 컷 일괄 생성 (씬당 4컷)"}
               </button>
               {articleSourceUrl && (
                 <button
@@ -1431,7 +1430,7 @@ export default function AnalyzePage() {
                               씬 분석 중...
                             </p>
                           ) : (
-                            <div className="grid grid-cols-3 md:grid-cols-7 gap-2">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                               {list.map((s) => {
                                 const pexelsBusy =
                                   busy === `shot-${activeSceneIndex}-${s.slot}`;

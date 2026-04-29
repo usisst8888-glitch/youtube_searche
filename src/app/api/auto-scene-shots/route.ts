@@ -267,60 +267,75 @@ async function generateSceneShotlist(
     const totalCount = imageSlots + videoSlots;
     const prompt = `당신은 한국 YouTube Shorts 편집자입니다.
 한 씬을 분석해서 9:16 화면에서 ${totalCount}컷이 **순서대로** 지나갈 비주얼 시퀀스를 설계하세요.
-앞 **${imageSlots}컷은 정지 이미지 (뉴스 사진/블로그)**, 뒤 **${videoSlots}컷은 YouTube 영상 클립**으로 가져옵니다.
-각 컷마다 한국어 검색어를 짜주세요.
-
-## 🚨 절대 규칙
-**메인 키워드: "${mainKeyword}"**
-모든 query는 반드시 메인 키워드를 포함해야 합니다.
-"${mainKeyword}" 없이 일반적인 키워드만 (예: "놀란 표정", "라면 끓이기") 짜면 영상의 주제와 무관한 결과가 나와서 ❌입니다.
+앞 **${imageSlots}컷은 정지 이미지**, 뒤 **${videoSlots}컷은 YouTube 영상 클립**으로 가져옵니다.
 
 ## 영상 컨텍스트
 주제: ${storyTopic}
+메인 키워드: ${mainKeyword || "(없음)"}
 
 ## 이번 씬
 대본: "${scene.text}"
 감정: ${scene.emotion}
 길이: ${scene.durationSec || 5}초
 
-## ${shotsCount}컷 구성 원칙
+## 🎯 검색어 짜는 핵심 원칙
 
-1. **각 컷은 서로 다른 역할** — 같은 종류 영상 반복 금지
-2. 가능한 컷 역할:
-   - "hook": 시각 후크 / 식욕 자극 / 음식 클로즈업
-   - "emotion": 인물 표정·감정 (놀람·웃음·충격·궁금증)
-   - "context": 장소·사물 맥락 (배경·환경·도구)
-   - "action": 움직임·행동 (먹기·뛰기·잡기 등)
-   - "reveal": 반전·정보 노출 (옛날 자료·증거·대비)
-3. **순서**가 중요 — 0번이 가장 강한 후크 (썸네일급), 마지막이 마무리
-4. **YouTube 한국어 검색용 키워드** — 한국 시청자가 진짜 검색할 만한 자연스러운 단어
-   - ✅ 좋은 예: "짜파게티 먹방", "놀란 한국인", "요리 클로즈업", "라면 ASMR", "옛날 광고"
-   - ❌ 나쁜 예: 영어 키워드, 추상 단어 (truth, secret), 너무 긴 구문
-5. **2~5단어**, 한국 YouTube에서 결과 많이 나오는 키워드
-6. 카테고리 키워드 활용 — "먹방", "리뷰", "ASMR", "실험", "광고", "리액션", "브이로그"
+**1순위 — 씬 텍스트에 등장하는 구체적 사물/명사를 직접 검색**
+씬 대본에 "인삼", "지황", "연꽃", "에센스 병", "화장품 패키지" 같은 **구체적 시각 명사**가 있으면 그걸 그대로 검색어로 쓰세요. 메인 키워드("${mainKeyword}") 안 붙여도 됩니다.
+
+✅ 씬: "인삼, 지황, 연꽃 같은 다섯 가지 원료를 배합했어요"
+   → 컷 query: "인삼", "지황 한약재", "연꽃 클로즈업", "한방 원료" — **구체적 사물**
+   → 메인 키워드 ("${mainKeyword}") 강제 X
+
+✅ 씬: "조선시대 궁중 비법에서 시작됐어요"
+   → 컷 query: "조선시대 궁궐", "한방 약초", "전통 화장품"
+
+**2순위 — 구체적 사물이 없으면 메인 키워드 + 일반 명사**
+씬이 추상적이거나 인물/감정 위주면 메인 키워드를 붙이세요.
+
+✅ 씬: "그런데 진짜 이상한 건..."
+   → "${mainKeyword} 광고", "${mainKeyword} 리뷰", "놀란 표정"
+
+## 컷 역할 카테고리
+- "hook": 식욕 자극 / 클로즈업
+- "emotion": 인물 표정·감정
+- "context": 장소·사물 맥락
+- "action": 움직임·행동
+- "reveal": 반전·정보 노출
+
+## 검색어 작성 규칙
+- 한국 시청자가 진짜 검색할 자연스러운 단어
+- ✅ "인삼 클로즈업", "연꽃 사진", "한약재 전시"
+- ❌ 영어 키워드, 추상 단어 (truth, secret), 너무 긴 구문
+- 2~5단어, 한국 YouTube/Bing에서 결과 풍부한 키워드
 
 ## 출력 필드
 - slot: 0부터 시작 (앞 ${imageSlots}개 = 이미지, 뒤 ${videoSlots}개 = 영상)
-- medium: "image" (slot 0..${imageSlots - 1}) 또는 "video" (slot ${imageSlots}..${totalCount - 1})
-- role: 위 카테고리 중 하나
+- medium: "image" 또는 "video"
+- role: hook / emotion / context / action / reveal
 - roleLabel: 한국어 설명 (10~20자)
-- query: **한국어** 검색어, **반드시 "${mainKeyword}" 포함**
-  - image용: 정적 사진이 많이 나오는 키워드 (인물 사진, 표정, 장소 등)
-  - video용: 영상 클립이 많이 나오는 키워드 (먹방, 리액션, 인터뷰 등)
+- query: 한국어 검색어 (구체 사물 우선, 없으면 메인 키워드)
 
-## 좋은 예 — 메인 키워드 "진태현" (이미지 ${imageSlots}컷 + 영상 ${videoSlots}컷)
-씬: "진태현이 결국 이혼숙려캠프를 떠난다"
+## 좋은 예 — 윤조에센스 씬 (구체 명사 등장)
+씬: "인삼, 지황, 연꽃 같은 다섯 가지 원료를 최적의 비율로 배합했어요"
+메인 키워드: 윤조에센스
 → shots: [
-  {"slot":0, "medium":"image", "role":"hook", "roleLabel":"진태현 프로필 사진", "query":"진태현 프로필"},
-  {"slot":1, "medium":"image", "role":"context", "roleLabel":"진태현 박시은 부부", "query":"진태현 박시은"},
-  {"slot":2, "medium":"image", "role":"reveal", "roleLabel":"이혼숙려캠프 출연 사진", "query":"진태현 이혼숙려캠프"},
-  {"slot":3, "medium":"video", "role":"emotion", "roleLabel":"진태현 인터뷰 영상", "query":"진태현 인터뷰"},
-  {"slot":4, "medium":"video", "role":"action", "roleLabel":"진태현 방송 클립", "query":"진태현 방송"}
+  {"slot":0, "medium":"image", "role":"hook", "roleLabel":"인삼 클로즈업", "query":"인삼 클로즈업"},
+  {"slot":1, "medium":"image", "role":"context", "roleLabel":"지황 한약재", "query":"지황 한약재"},
+  {"slot":2, "medium":"image", "role":"context", "roleLabel":"연꽃 사진", "query":"연꽃"},
+  {"slot":3, "medium":"image", "role":"reveal", "roleLabel":"한방 화장품 원료", "query":"한방 화장품 원료"},
+  {"slot":4, "medium":"image", "role":"context", "roleLabel":"에센스 병", "query":"화장품 에센스 병"}
 ]
+※ "${mainKeyword}"가 query에 없어도 OK — 씬에 나온 구체 명사("인삼")가 우선
 
-## ❌ 나쁜 예 (메인 키워드 빠짐 — 절대 금지)
-{"query":"놀란 표정 한국인"}  ← "${mainKeyword}" 없음
-{"query":"이혼숙려캠프 부부싸움"}  ← "${mainKeyword}" 없음
+## 좋은 예 — 진태현 씬 (구체 명사 적음, 인물 위주)
+씬: "진태현이 결국 떠난다네요... 다들 충격이에요"
+메인 키워드: 진태현
+→ shots: [
+  {"slot":0, "medium":"image", "role":"hook", "roleLabel":"진태현 프로필", "query":"진태현 프로필"},
+  {"slot":1, "medium":"image", "role":"emotion", "roleLabel":"충격받은 표정", "query":"충격 표정"},
+  ...
+]
 
 JSON 출력.`;
 
@@ -347,13 +362,8 @@ JSON 출력.`;
       .filter((s) => typeof s.query === "string" && !!s.query.trim())
       .slice(0, totalCount)
       .map((s, i) => {
-        let query = s.query!.trim();
-        if (
-          mainKeyword &&
-          !query.toLowerCase().includes(mainKeyword.toLowerCase())
-        ) {
-          query = `${mainKeyword} ${query}`;
-        }
+        const query = s.query!.trim();
+        // 메인 키워드 강제 prepend는 제거 — 씬에 등장하는 구체 명사 우선 정책
         const slot = typeof s.slot === "number" ? s.slot : i;
         // medium이 명시 안 됐거나 잘못된 경우 슬롯 위치로 결정
         const inferredMedium: "image" | "video" =

@@ -156,7 +156,15 @@ export default function FinalizePage() {
     return bytes;
   };
 
-  // === 대본 텍스트 빌드 ===
+  // 대본 한 줄로 — 씬 텍스트만 이어붙임 (TTS 입력용)
+  const buildPlainScript = (): string => {
+    return generatedScenes
+      .map((s) => s.text.trim())
+      .filter(Boolean)
+      .join(" ");
+  };
+
+  // === 대본 + 메타 상세 텍스트 (zip 루트에 들어감) ===
   const buildScriptText = (): string => {
     const lines: string[] = [];
     lines.push("=".repeat(60));
@@ -212,7 +220,8 @@ export default function FinalizePage() {
   };
 
   const downloadScriptOnly = () => {
-    const txt = buildScriptText();
+    // 한 줄 대본 (씬 합쳐서) — TTS / 캡컷에 그대로 붙여넣기 좋게
+    const txt = buildPlainScript();
     const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
     triggerDownload(
       blob,
@@ -232,15 +241,21 @@ export default function FinalizePage() {
     try {
       const zip = new JSZip();
 
-      // 1) 대본
-      zip.file("script.txt", buildScriptText());
+      // 1a) 한 줄 대본 (TTS/캡컷에 바로 붙여넣기 용)
+      zip.file("script.txt", buildPlainScript());
+      // 1b) 상세 메타 (제목/씬별 클립 정보/원본 URL)
+      zip.file("script-detail.txt", buildScriptText());
 
-      // 2) 씬별 클립
+      // 2) 씬별 클립 + 씬 대본 파일
       for (let pos = 0; pos < generatedScenes.length; pos++) {
         const scene = generatedScenes[pos];
         const assets = selectedSceneAssets[scene.index] || [];
-        if (assets.length === 0) continue;
         const sceneDir = `scene-${String(pos + 1).padStart(2, "0")}`;
+
+        // 씬별 대본 한 줄 — TTS / 캡컷에 바로 붙여넣기 용
+        zip.file(`${sceneDir}/script.txt`, scene.text.trim());
+
+        if (assets.length === 0) continue;
 
         for (let j = 0; j < assets.length; j++) {
           const a = assets[j];
@@ -339,17 +354,23 @@ export default function FinalizePage() {
             <code className="bg-zinc-100 dark:bg-zinc-800 px-1 rounded">
               script.txt
             </code>{" "}
-            — 영상 제목, 씬별 대본, 클립별 자막, 원본 URL
+            — 전체 대본 한 줄 (TTS/캡컷에 그대로 붙여넣기)
           </li>
           <li>
             <code className="bg-zinc-100 dark:bg-zinc-800 px-1 rounded">
-              scene-01/, scene-02/, ...
+              script-detail.txt
             </code>{" "}
-            — 씬별 폴더, 안에 clip-01, clip-02 형식의 미디어 파일
+            — 영상 제목·씬별 클립 정보·원본 URL (참고용)
           </li>
           <li>
-            클립 미디어: 📰 기사 사진 · 🎬 YouTube mp4 · 🖼️ Bing 사진 · 🎨 AI
-            이미지
+            <code className="bg-zinc-100 dark:bg-zinc-800 px-1 rounded">
+              scene-01/script.txt
+            </code>{" "}
+            — 씬 1 대본 한 줄, 클립 미디어 (clip-01, clip-02, ...)
+          </li>
+          <li>
+            클립 미디어: 📰 기사 사진 · 🖼️ Bing 사진 · 🎨 AI 이미지 · 🤣 짤
+            (mp4/gif)
           </li>
         </ul>
 
