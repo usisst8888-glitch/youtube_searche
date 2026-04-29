@@ -4,7 +4,12 @@ import { useState } from "react";
 import Link from "next/link";
 import { useProject, WebSceneAsset, SceneScript } from "../context";
 
-const IMAGES_PER_SCENE = 5;
+const IMAGES_PER_SCENE = 7;
+// 7컷 패턴: [main, main, 짤, main, main, 짤, main]
+const JJAL_SLOTS = new Set<number>([2, 5]);
+const MAIN_COUNT = 5; // 7 - 2 짤
+const IMAGE_MAIN_SLOTS = 5; // 메인 5개 모두 이미지 (YouTube 영상 제거)
+const VIDEO_MAIN_SLOTS = 0;
 
 type GenItem = {
   sceneIndex: number;
@@ -141,7 +146,33 @@ export default function AnalyzePage() {
         .filter((s) => !!s.image)
         .map<WebSceneAsset>((s) => {
           const img = s.image!;
-          // 영상이 있으면 youtube-short, 없으면 web-image
+          // 짤 (direct mp4/webm) → tiktok 모양으로 packing
+          if (
+            img.directVideoUrl &&
+            (img.directVideoExt === "mp4" ||
+              img.directVideoExt === "webm")
+          ) {
+            return {
+              kind: "tiktok",
+              videoId: img.sourceUrl,
+              coverUrl: img.thumbnailUrl || img.imageUrl,
+              title: s.roleLabel || img.title,
+              author: img.siteName,
+              playUrl: img.directVideoUrl,
+              watchUrl: img.sourceUrl,
+            };
+          }
+          // 짤 (gif) → web-image (gif는 img 태그에서 자동 재생)
+          if (img.directVideoUrl && img.directVideoExt === "gif") {
+            return {
+              kind: "web-image",
+              imageUrl: img.directVideoUrl,
+              sourceUrl: img.sourceUrl,
+              title: s.roleLabel || img.title,
+              siteName: img.siteName,
+            };
+          }
+          // YouTube 영상
           if (img.videoId && img.embedUrl && img.watchUrl) {
             return {
               kind: "youtube-short",
@@ -261,13 +292,18 @@ export default function AnalyzePage() {
     return urls.find((u) => /^https?:\/\//i.test(u)) || "";
   })();
 
+  // 사용자 명시 요청으로만 호출 — 기사 URL → 이미지 추출 → 기존 shotlist 앞 슬롯 교체
   const fetchArticleImages = async () => {
     if (!articleSourceUrl) {
-      setError("기사 URL이 없습니다. 라이브러리에서 URL이 있는 썰을 골라주세요.");
+      setError("기사 URL이 없습니다. 이 썰에는 기사 출처가 없어요.");
       return;
     }
     if (generatedScenes.length === 0) {
       setError("먼저 대본을 생성하세요.");
+      return;
+    }
+    if (Object.keys(shotlistByScene).length === 0) {
+      setError("먼저 🎯 컷 일괄 생성을 실행하세요.");
       return;
     }
     setBusy("article-images");
@@ -286,14 +322,67 @@ export default function AnalyzePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "기사 이미지 추출 실패");
-      const byScene = data.byScene as Record<number, string[]>;
-      setArticleImagesByScene(byScene || {});
-      syncToSelectedAssets(
-        sceneImages,
-        selectedGoogleImageUrls,
-        shotlistByScene,
-        byScene || {},
-      );
+
+      // 씬 간 중복 제거
+      let byScene = (data.byScene || {}) as Record<number, string[]>;
+      const usedUrls = new Set<string>();
+      const deduped: Record<number, string[]> = {};
+      for (const sc of generatedScenes) {
+        const urls = (byScene[sc.index] || []).filter(
+          (u) => !usedUrls.has(u),
+        );
+        if (urls.length > 0) {
+          deduped[sc.index] = urls;
+          urls.forEach((u) => usedUrls.add(u));
+        }
+      }
+      byScene = deduped;
+      setArticleImagesByScene(byScene);
+
+      // 기존 shotlist의 메인 슬롯(0,1,3,4,6) 앞에서부터 기사 이미지로 교체
+      setShotlistByScene((prev) => {
+        const next = { ...prev };
+        for (const scene of generatedScenes) {
+          const articleUrls = (byScene[scene.index] || []).slice(
+            0,
+            MAIN_COUNT,
+          );
+          if (articleUrls.length === 0) continue;
+          const cur = next[scene.index] || [];
+          const updated = [...cur];
+          let aIdx = 0;
+          for (let slot = 0; slot < IMAGES_PER_SCENE; slot++) {
+            if (JJAL_SLOTS.has(slot)) continue;
+            if (aIdx >= articleUrls.length) break;
+            const url = articleUrls[aIdx++];
+            const articleShot = {
+              sceneIndex: scene.index,
+              slot,
+              role: "article",
+              roleLabel: "기사 원본",
+              query: "",
+              image: {
+                imageUrl: url,
+                sourceUrl: url,
+                siteName: "기사 원본",
+                title: `기사 이미지 ${aIdx}`,
+                thumbnailUrl: url,
+              },
+            };
+            const existingIdx = updated.findIndex((s) => s.slot === slot);
+            if (existingIdx >= 0) updated[existingIdx] = articleShot;
+            else updated.push(articleShot);
+          }
+          next[scene.index] = updated.sort((a, b) => a.slot - b.slot);
+        }
+        syncToSelectedAssets(
+          sceneImages,
+          selectedGoogleImageUrls,
+          next,
+          byScene,
+        );
+        return next;
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "오류");
     } finally {
@@ -359,6 +448,8 @@ export default function AnalyzePage() {
         videoId?: string;
         embedUrl?: string;
         watchUrl?: string;
+        directVideoUrl?: string;
+        directVideoExt?: "mp4" | "gif" | "webm";
       } | null;
     }[];
   };
@@ -368,55 +459,75 @@ export default function AnalyzePage() {
     setBusy("shots-all");
     setError("");
     try {
-      // Step 1: 기사 URL이 있으면 이미지 추출 + 씬 배정
-      let articleByScene: Record<number, string[]> = {};
-      if (articleSourceUrl) {
+      // 컷 일괄 생성에서는 기사 이미지를 자동으로 가져오지 않음.
+      // (사용자가 별도 "📰 기사 이미지 가져오기" 버튼으로 명시 요청해야만 처리됨)
+      const articleByScene: Record<number, string[]> = {};
+      setArticleImagesByScene({});
+
+      // Step 2: 메인 컷 구성 — 이미지 3 + 영상 2 (총 5개 메인)
+      const shots = await callAutoShots({
+        mode: "all",
+        imageSlots: IMAGE_MAIN_SLOTS,
+        videoSlots: VIDEO_MAIN_SLOTS,
+      });
+
+      // Step 3: 짤 가져오기 — 씬당 2개 (씬 emotion 태그 + fallback)
+      const usedJjalUrls = new Set<string>();
+      // 인기 태그 fallback (씬 감정 태그가 결과 0이면 시도)
+      const FALLBACK_TAGS = ["놀람", "황당", "당황", "웃음", "충격", "멘붕"];
+      type JjalItemClient = {
+        mediaUrl: string;
+        thumbnailUrl: string;
+        watchUrl: string;
+        title: string;
+        ext: "mp4" | "gif" | "webm";
+        tag: string;
+      };
+      const jjalByScene: Record<number, JjalItemClient[]> = {};
+
+      const fetchJjals = async (
+        tag: string,
+        need: number,
+      ): Promise<JjalItemClient[]> => {
         try {
-          const artRes = await fetch("/api/extract-article-assets", {
+          const res = await fetch("/api/search-jjal", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              url: articleSourceUrl,
-              scenes: generatedScenes.map((s) => ({
-                index: s.index,
-                text: s.text,
-              })),
+              tag,
+              limit: need,
+              exclude: Array.from(usedJjalUrls),
             }),
           });
-          const artData = await artRes.json();
-          if (artRes.ok) {
-            articleByScene = artData.byScene || {};
-          }
+          if (!res.ok) return [];
+          const data = await res.json();
+          return (data.items || []) as JjalItemClient[];
         } catch {
-          // 기사 추출 실패해도 fallback
+          return [];
         }
+      };
+
+      for (const scene of generatedScenes) {
+        const primaryTag = (scene.emotion || "").trim() || "놀람";
+        const collected: JjalItemClient[] = [];
+        const tagsToTry = [
+          primaryTag,
+          ...FALLBACK_TAGS.filter((t) => t !== primaryTag),
+        ];
+        for (const tag of tagsToTry) {
+          if (collected.length >= JJAL_SLOTS.size) break;
+          const got = await fetchJjals(tag, JJAL_SLOTS.size - collected.length);
+          for (const it of got) {
+            if (usedJjalUrls.has(it.mediaUrl)) continue;
+            usedJjalUrls.add(it.mediaUrl);
+            collected.push(it);
+            if (collected.length >= JJAL_SLOTS.size) break;
+          }
+        }
+        jjalByScene[scene.index] = collected;
       }
 
-      // 씬 간 중복 제거 — 같은 URL이 여러 씬에 있으면 첫 씬에만 유지
-      const usedArticleUrls = new Set<string>();
-      const dedupedArticleByScene: Record<number, string[]> = {};
-      for (const sc of generatedScenes) {
-        const urls = (articleByScene[sc.index] || []).filter(
-          (u) => !usedArticleUrls.has(u),
-        );
-        if (urls.length > 0) {
-          dedupedArticleByScene[sc.index] = urls;
-          urls.forEach((u) => usedArticleUrls.add(u));
-        }
-      }
-      articleByScene = dedupedArticleByScene;
-      setArticleImagesByScene(articleByScene);
-
-      // Step 2: 자동 컷 구성 — 이미지 3 + 영상 2 (API가 mix해서 줌)
-      const IMAGE_SLOTS = 3;
-      const VIDEO_SLOTS = 2;
-      const shots = await callAutoShots({
-        mode: "all",
-        imageSlots: IMAGE_SLOTS,
-        videoSlots: VIDEO_SLOTS,
-      });
-
-      // Step 3: 씬별 합치기 — slot 0는 기사 우선, 1~4는 랜덤 셔플
+      // Step 4: 씬별 합치기 — slot 0는 기사 우선, 메인 슬롯은 셔플, 짤 슬롯은 고정 위치
       const shuffle = <T,>(arr: T[]): T[] => {
         const out = [...arr];
         for (let i = out.length - 1; i > 0; i--) {
@@ -428,11 +539,11 @@ export default function AnalyzePage() {
 
       const merged: typeof shotlistByScene = {};
       for (const scene of generatedScenes) {
-        const articleUrls = (articleByScene[scene.index] || []).slice(
-          0,
-          IMAGES_PER_SCENE,
-        );
+        // 컷 일괄 생성에서는 article 슬롯 절대 안 만듦 — articleByScene는 위에서 비어있음
+        void articleByScene;
+        const articleUrls: string[] = [];
         const apiShots = shots.filter((s) => s.sceneIndex === scene.index);
+        const jjals = jjalByScene[scene.index] || [];
 
         type Shot = (typeof shots)[number];
         const articleShots: Shot[] = articleUrls.map((url, i) => ({
@@ -450,30 +561,56 @@ export default function AnalyzePage() {
           },
         }));
 
-        const final: Shot[] = [];
-
-        // Slot 0: 기사가 있으면 기사 우선
+        // 메인 풀 만들기 (5개)
+        const mainPool: Shot[] = [];
         if (articleShots.length > 0) {
-          final.push(articleShots.shift()!);
-        } else if (apiShots.length > 0) {
-          // 기사 없으면 API 첫번째 결과를 임의로
-          const shuffledApi = shuffle(apiShots);
-          final.push(shuffledApi.shift()!);
-          apiShots.length = 0;
-          apiShots.push(...shuffledApi);
+          mainPool.push(articleShots.shift()!); // 첫 기사 = slot 0
+          const rest = shuffle([...articleShots, ...apiShots]);
+          for (const r of rest) {
+            if (mainPool.length >= MAIN_COUNT) break;
+            mainPool.push(r);
+          }
+        } else {
+          const shuffled = shuffle(apiShots);
+          for (const s of shuffled) {
+            if (mainPool.length >= MAIN_COUNT) break;
+            mainPool.push(s);
+          }
         }
 
-        // Slot 1~4: 남은 기사 + 남은 API 셔플
-        const remaining = shuffle([...articleShots, ...apiShots]);
-        for (const r of remaining) {
-          if (final.length >= IMAGES_PER_SCENE) break;
-          final.push(r);
+        // 7-slot 배치: [main, main, 짤, main, main, 짤, main]
+        const final: Shot[] = [];
+        let mainIdx = 0;
+        let jjalIdx = 0;
+        for (let slot = 0; slot < IMAGES_PER_SCENE; slot++) {
+          if (JJAL_SLOTS.has(slot)) {
+            const j = jjals[jjalIdx++];
+            if (j) {
+              const proxiedMedia = `/api/proxy-asset?url=${encodeURIComponent(j.mediaUrl)}`;
+              final.push({
+                sceneIndex: scene.index,
+                slot,
+                role: "jjal",
+                roleLabel: `짤 (${j.tag})`,
+                query: "",
+                image: {
+                  imageUrl: proxiedMedia,
+                  sourceUrl: j.watchUrl,
+                  siteName: `짤방 · ${j.tag}`,
+                  thumbnailUrl: proxiedMedia,
+                  title: j.title,
+                  directVideoUrl: proxiedMedia,
+                  directVideoExt: j.ext,
+                },
+              });
+            }
+          } else {
+            const m = mainPool[mainIdx++];
+            if (m) {
+              final.push({ ...m, slot });
+            }
+          }
         }
-
-        // slot 번호 0..N 으로 재할당
-        final.forEach((s, i) => {
-          s.slot = i;
-        });
 
         if (final.length > 0) merged[scene.index] = final;
       }
@@ -669,6 +806,84 @@ export default function AnalyzePage() {
           ].sort((a, b) => a.slot - b.slot);
         }
         const next = { ...prev, [sceneIndex]: nextList };
+        syncToSelectedAssets(
+          sceneImages,
+          selectedGoogleImageUrls,
+          next,
+          articleImagesByScene,
+        );
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "오류");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // 특정 씬-컷을 짤(mp4/gif)로 교체 — 짤방 사이트 검색
+  const jjalReplaceShot = async (sceneIndex: number, slot: number) => {
+    const list = shotlistByScene[sceneIndex] || [];
+    const target = list.find((x) => x.slot === slot);
+    if (!target) return;
+    const scene = generatedScenes.find((s) => s.index === sceneIndex);
+    // 태그 우선순위: 씬 감정 → 컷 roleLabel 첫 단어 → "놀람" fallback
+    const tag =
+      (scene?.emotion || "").trim() ||
+      target.roleLabel?.split(/[\s(]/)[0] ||
+      "놀람";
+
+    const seenKey = `${sceneIndex}-${slot}`;
+    const seenList = seenByShot[seenKey] || [];
+    const currentDirect = target.image?.directVideoUrl;
+    const exclude = currentDirect
+      ? Array.from(new Set([...seenList, currentDirect]))
+      : seenList;
+
+    setBusy(`jjal-${sceneIndex}-${slot}`);
+    setError("");
+    try {
+      const res = await fetch("/api/search-jjal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag, limit: 1, exclude }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "짤 검색 실패");
+      const it = (data.items || [])[0];
+      if (!it) throw new Error(`"${tag}" 태그 짤이 더 없습니다`);
+
+      setSeenByShot((prev) => ({
+        ...prev,
+        [seenKey]: Array.from(
+          new Set([
+            ...(prev[seenKey] || []),
+            ...(currentDirect ? [currentDirect] : []),
+            it.mediaUrl,
+          ]),
+        ),
+      }));
+
+      setShotlistByScene((prev) => {
+        const cur = prev[sceneIndex] || [];
+        const idx = cur.findIndex((x) => x.slot === slot);
+        if (idx < 0) return prev;
+        const copy = [...cur];
+        // 브라우저 표시는 proxy 경유 (hotlink 우회), 다운로드/원본 추적용은 raw URL
+        const proxiedMedia = `/api/proxy-asset?url=${encodeURIComponent(it.mediaUrl)}`;
+        copy[idx] = {
+          ...copy[idx],
+          image: {
+            imageUrl: proxiedMedia,
+            sourceUrl: it.watchUrl,
+            siteName: `짤방 · ${tag}`,
+            thumbnailUrl: proxiedMedia,
+            title: it.title,
+            directVideoUrl: proxiedMedia,
+            directVideoExt: it.ext,
+          },
+        };
+        const next = { ...prev, [sceneIndex]: copy };
         syncToSelectedAssets(
           sceneImages,
           selectedGoogleImageUrls,
@@ -1057,13 +1272,11 @@ export default function AnalyzePage() {
                 🎯 씬별 컷 일괄 생성
               </h3>
               <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1">
-                씬 {generatedScenes.length}개 × {IMAGES_PER_SCENE}컷 = 총{" "}
-                {generatedScenes.length * IMAGES_PER_SCENE}컷.{" "}
-                {articleSourceUrl
-                  ? "기사 URL 이미지를 우선 배치하고, 나머지는 YouTube 클립으로 채움. "
-                  : "AI가 각 컷 역할 정해서 YouTube에서 영상 찾아 배치. "}
-                컷마다 🎨 = AI 생성, 🖼️ = 뉴스/웹 이미지 (Bing 검색), 🔄 =
-                YouTube 다시. 영상에 마우스 올리면 자동 재생.
+                씬 {generatedScenes.length}개 × {IMAGES_PER_SCENE}컷 (메인
+                이미지 5 + 짤 2) = 총{" "}
+                {generatedScenes.length * IMAGES_PER_SCENE}컷. 패턴:{" "}
+                <code>이미지 · 이미지 · 🤣 · 이미지 · 이미지 · 🤣 · 이미지</code>.
+                컷마다 🎨 AI · 🖼️ 웹이미지 · 🤣 짤 · 🔄 새로고침.
               </p>
             </div>
             <div className="flex gap-2 flex-wrap">
@@ -1077,8 +1290,23 @@ export default function AnalyzePage() {
                   ? "🎯 분석 중..."
                   : Object.keys(shotlistByScene).length > 0
                     ? "🔄 컷 일괄 다시"
-                    : "🎯 컷 일괄 생성 (씬당 5컷)"}
+                    : "🎯 컷 일괄 생성 (씬당 7컷)"}
               </button>
+              {articleSourceUrl && (
+                <button
+                  type="button"
+                  onClick={fetchArticleImages}
+                  disabled={busy !== null}
+                  className="bg-amber-600 hover:bg-amber-700 disabled:bg-zinc-400 text-white font-semibold text-sm px-4 py-2 rounded-lg"
+                  title={`기사 URL: ${articleSourceUrl}`}
+                >
+                  {busy === "article-images"
+                    ? "📰 추출 중..."
+                    : Object.keys(articleImagesByScene).length > 0
+                      ? "🔄 기사 이미지 다시"
+                      : "📰 기사 이미지 가져오기 (선택)"}
+                </button>
+              )}
             </div>
           </div>
           {styleGuide && (
@@ -1100,7 +1328,7 @@ export default function AnalyzePage() {
           {/* 위: 씬 리스트 (가로 배열로 컴팩트하게) */}
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
             <h3 className="font-semibold mb-2">🎬 씬별 대본</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
             {generatedScenes.map((s) => {
               const slots = sceneImages[s.index] || [];
               const filled = slots.filter((u) => !!u).length;
@@ -1203,7 +1431,7 @@ export default function AnalyzePage() {
                               씬 분석 중...
                             </p>
                           ) : (
-                            <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+                            <div className="grid grid-cols-3 md:grid-cols-7 gap-2">
                               {list.map((s) => {
                                 const pexelsBusy =
                                   busy === `shot-${activeSceneIndex}-${s.slot}`;
@@ -1216,6 +1444,7 @@ export default function AnalyzePage() {
                                 const cellBusy = pexelsBusy || aiBusy || webBusy;
                                 const isAi = s.role === "ai";
                                 const isArticle = s.role === "article";
+                                const isJjal = s.role === "jjal";
                                 const isVideo = !!s.image?.videoId;
                                 const isHovered =
                                   hoveredAssetKey ===
@@ -1241,14 +1470,32 @@ export default function AnalyzePage() {
                                         ? "border-purple-400 dark:border-purple-700"
                                         : isArticle
                                           ? "border-amber-400 dark:border-amber-700"
-                                          : "border-emerald-300 dark:border-emerald-800"
+                                          : isJjal
+                                            ? "border-pink-400 dark:border-pink-700"
+                                            : "border-emerald-300 dark:border-emerald-800"
                                     }`}
                                   >
                                     <div className="relative w-full aspect-[9/16]">
                                       {s.image ? (
-                                        isHovered &&
-                                        isVideo &&
-                                        s.image.embedUrl ? (
+                                        // 짤 mp4/webm — <video> 자동 재생 (gif는 img 태그가 알아서 재생)
+                                        s.image.directVideoUrl &&
+                                        (s.image.directVideoExt === "mp4" ||
+                                          s.image.directVideoExt === "webm") ? (
+                                          <video
+                                            src={s.image.directVideoUrl}
+                                            poster={
+                                              s.image.thumbnailUrl ||
+                                              s.image.imageUrl
+                                            }
+                                            autoPlay
+                                            loop
+                                            muted
+                                            playsInline
+                                            className="absolute inset-0 w-full h-full object-cover"
+                                          />
+                                        ) : isHovered &&
+                                          isVideo &&
+                                          s.image.embedUrl ? (
                                           <iframe
                                             src={`${s.image.embedUrl}?autoplay=1&mute=1&controls=0&loop=1&playlist=${s.image.videoId}&modestbranding=1&rel=0`}
                                             title="preview"
@@ -1259,8 +1506,11 @@ export default function AnalyzePage() {
                                           // eslint-disable-next-line @next/next/no-img-element
                                           <img
                                             src={
-                                              s.image.thumbnailUrl ||
-                                              s.image.imageUrl
+                                              s.image.directVideoExt === "gif"
+                                                ? s.image.directVideoUrl ||
+                                                  s.image.imageUrl
+                                                : s.image.thumbnailUrl ||
+                                                  s.image.imageUrl
                                             }
                                             alt={s.roleLabel}
                                             loading="lazy"
@@ -1299,11 +1549,19 @@ export default function AnalyzePage() {
                                           ? "bg-purple-600"
                                           : isArticle
                                             ? "bg-amber-600"
-                                            : "bg-emerald-600"
+                                            : isJjal
+                                              ? "bg-pink-600"
+                                              : "bg-emerald-600"
                                       }`}
                                     >
                                       {s.slot + 1}.{" "}
-                                      {isAi ? "AI" : isArticle ? "📰" : s.role}
+                                      {isAi
+                                        ? "AI"
+                                        : isArticle
+                                          ? "📰"
+                                          : isJjal
+                                            ? "🤣"
+                                            : s.role}
                                     </div>
                                     <div className="absolute top-1.5 right-1.5 flex gap-1">
                                       <button
@@ -1333,6 +1591,25 @@ export default function AnalyzePage() {
                                         title="웹 이미지 (뉴스/블로그) 로 교체 — 누를 때마다 다른 이미지"
                                       >
                                         🖼️
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          jjalReplaceShot(
+                                            activeSceneIndex,
+                                            s.slot,
+                                          )
+                                        }
+                                        disabled={busy !== null}
+                                        className="bg-pink-600 hover:bg-pink-700 disabled:opacity-50 text-white text-base px-2.5 py-1.5 rounded-md shadow-md"
+                                        title={`이 컷을 짤(mp4/gif)로 교체 — 씬 감정 "${
+                                          generatedScenes.find(
+                                            (sc) =>
+                                              sc.index === activeSceneIndex,
+                                          )?.emotion || "놀람"
+                                        }" 태그`}
+                                      >
+                                        🤣
                                       </button>
                                       <button
                                         type="button"

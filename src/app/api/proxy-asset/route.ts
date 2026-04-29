@@ -19,11 +19,21 @@ export async function GET(req: NextRequest) {
   if (!ALLOWED_PREFIXES.some((p) => url.startsWith(p))) {
     return NextResponse.json({ error: "잘못된 URL" }, { status: 400 });
   }
+  // 일부 사이트는 hotlink 보호 — 자기 도메인 referer 필요
+  let referer: string | undefined;
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes("jjalbang.today")) {
+      referer = "https://www.jjalbang.today/";
+    }
+  } catch {}
+
   try {
     const upstream = await fetch(url, {
       headers: {
         "User-Agent": UA,
         Accept: "image/*,audio/*,video/*,*/*;q=0.8",
+        ...(referer ? { Referer: referer } : {}),
       },
       redirect: "follow",
     });

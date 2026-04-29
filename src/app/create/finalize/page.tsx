@@ -1,34 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { fetchFile, toBlobURL } from "@ffmpeg/util";
+import JSZip from "jszip";
+import { fetchFile } from "@ffmpeg/util";
 import { useProject, WebSceneAsset } from "../context";
-import { authFetch } from "@/lib/auth-fetch";
-import {
-  getCachedAsset,
-  setCachedAsset,
-  clearAssetCache,
-  getCacheStats,
-} from "@/lib/asset-cache";
+import { getCachedAsset, setCachedAsset } from "@/lib/asset-cache";
 
-// 기본 쇼츠 템플릿 (3:7 default — 비율은 UI에서 조절)
-const TEMPLATE = {
-  width: 720,
-  height: 1280,
-  fps: 30,
-  ttsVolume: 1.0,
-  captionFontSize: 44,
-  captionHeight: 200, // 하단 자막 영역 높이
-};
-
-// 씬 대본을 N개의 자막 청크로 자동 분할
+// 씬 대본을 N개의 자막 청크로 자동 분할 (스크립트.txt 작성용)
 function splitTextIntoChunks(text: string, n: number): string[] {
   if (n <= 0) return [];
   if (n === 1) return [text.trim()];
   const trimmed = text.trim();
-  // 1) 문장 단위 split
   const sentences = trimmed
     .split(/(?<=[.!?…])\s+/)
     .map((s) => s.trim())
@@ -45,7 +28,6 @@ function splitTextIntoChunks(text: string, n: number): string[] {
     while (chunks.length < n) chunks.push("");
     return chunks.slice(0, n);
   }
-  // 2) 쉼표/접속사 단위 split
   const phrases = trimmed
     .split(/(?<=[,;])\s+|\s+(?=그런데|그래서|근데|하지만|그리고|또)/)
     .map((s) => s.trim())
@@ -62,7 +44,6 @@ function splitTextIntoChunks(text: string, n: number): string[] {
     while (chunks.length < n) chunks.push("");
     return chunks.slice(0, n);
   }
-  // 3) 글자 단위 균등 분할 (최후)
   const len = Math.ceil(trimmed.length / n);
   const chunks: string[] = [];
   for (let i = 0; i < n; i++) {
@@ -77,131 +58,20 @@ function assetToImageUrl(a: WebSceneAsset): string {
   return a.coverUrl;
 }
 
-// 영상 자산 다운로드 URL 추출 (썸네일 X, 실제 재생 가능한 URL)
-function assetToVideoUrl(a: WebSceneAsset): string | null {
+function assetSourceLabel(a: WebSceneAsset): string {
+  if (a.kind === "youtube-short") return "🎬 YouTube";
+  if (a.kind === "web-image") {
+    if (a.siteName === "기사 원본") return "📰 기사";
+    if (a.siteName === "AI 생성") return "🎨 AI";
+    return "🖼️ 웹";
+  }
+  return "🎵 TikTok";
+}
+
+function assetOriginalUrl(a: WebSceneAsset): string {
   if (a.kind === "youtube-short") return a.watchUrl;
-  if (a.kind === "tiktok") return a.playUrl || a.watchUrl;
-  return null;
-}
-
-function wrapText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number,
-): string[] {
-  const words = text.split(" ");
-  const lines: string[] = [];
-  let line = "";
-  for (const word of words) {
-    const test = line ? line + " " + word : word;
-    if (ctx.measureText(test).width > maxWidth && line) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = test;
-    }
-  }
-  if (line) lines.push(line);
-  // 한국어는 단어 분리가 안 되는 경우 많아서 글자 단위 fallback
-  if (lines.length === 1 && ctx.measureText(text).width > maxWidth) {
-    const chars: string[] = [];
-    let cur = "";
-    for (const ch of text) {
-      const t = cur + ch;
-      if (ctx.measureText(t).width > maxWidth && cur) {
-        chars.push(cur);
-        cur = ch;
-      } else {
-        cur = t;
-      }
-    }
-    if (cur) chars.push(cur);
-    return chars;
-  }
-  return lines;
-}
-
-async function renderTitleBarPng(args: {
-  width: number;
-  height: number;
-  text: string;
-  bgColor: string;
-  textColor: string;
-  fontSize: number;
-}): Promise<Uint8Array> {
-  const canvas = document.createElement("canvas");
-  canvas.width = args.width;
-  canvas.height = args.height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("canvas 2d 컨텍스트 없음");
-  ctx.fillStyle = args.bgColor;
-  ctx.fillRect(0, 0, args.width, args.height);
-  ctx.fillStyle = args.textColor;
-  ctx.font = `900 ${args.fontSize}px "Apple SD Gothic Neo", "Noto Sans KR", "Pretendard", sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  const padding = 40;
-  const lines = wrapText(ctx, args.text, args.width - padding * 2);
-  const lineHeight = args.fontSize * 1.25;
-  const startY = args.height / 2 - ((lines.length - 1) * lineHeight) / 2;
-  lines.forEach((line, i) => {
-    ctx.fillText(line, args.width / 2, startY + i * lineHeight);
-  });
-  const blob = await new Promise<Blob | null>((res) =>
-    canvas.toBlob(res, "image/png"),
-  );
-  if (!blob) throw new Error("PNG blob 생성 실패");
-  const buf = await blob.arrayBuffer();
-  return new Uint8Array(buf);
-}
-
-// 클립 자막 PNG (투명 배경 + 흰 텍스트 + 검은 stroke)
-async function renderCaptionPng(args: {
-  width: number;
-  height: number;
-  text: string;
-  fontSize: number;
-}): Promise<Uint8Array> {
-  const canvas = document.createElement("canvas");
-  canvas.width = args.width;
-  canvas.height = args.height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("canvas 2d 컨텍스트 없음");
-  // 투명 배경
-  ctx.clearRect(0, 0, args.width, args.height);
-  ctx.font = `900 ${args.fontSize}px "Apple SD Gothic Neo", "Noto Sans KR", "Pretendard", sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  const padding = 30;
-  const lines = wrapText(ctx, args.text, args.width - padding * 2);
-  const lineHeight = args.fontSize * 1.25;
-  // 자막은 영역 하단에 고정 (밑에서 padding 만큼 띄움)
-  const totalTextHeight = lines.length * lineHeight;
-  const bottomPadding = 40;
-  const startY =
-    args.height - bottomPadding - totalTextHeight + lineHeight / 2;
-
-  lines.forEach((line, i) => {
-    const x = args.width / 2;
-    const y = startY + i * lineHeight;
-    // 검은 외곽선 (가독성)
-    ctx.lineWidth = Math.max(6, args.fontSize / 8);
-    ctx.strokeStyle = "rgba(0,0,0,0.95)";
-    ctx.lineJoin = "round";
-    ctx.miterLimit = 2;
-    ctx.strokeText(line, x, y);
-    // 흰 본문
-    ctx.fillStyle = "#FFFFFF";
-    ctx.fillText(line, x, y);
-  });
-
-  const blob = await new Promise<Blob | null>((res) =>
-    canvas.toBlob(res, "image/png"),
-  );
-  if (!blob) throw new Error("PNG blob 생성 실패");
-  const buf = await blob.arrayBuffer();
-  return new Uint8Array(buf);
+  if (a.kind === "web-image") return a.sourceUrl || a.imageUrl;
+  return a.watchUrl;
 }
 
 export default function FinalizePage() {
@@ -211,70 +81,16 @@ export default function FinalizePage() {
     storyTopic,
     videoTitle,
     productName,
-    ttsAudioUrl,
-    setTtsAudioUrl,
     clipCaptions,
     setClipCaptions,
-    finalVideoUrl,
-    setFinalVideoUrl,
   } = useProject();
 
-  // 템플릿 설정
-  const [bgColor, setBgColor] = useState("#FFE600");
-  const [textColor, setTextColor] = useState("#000000");
-  const [fontSize, setFontSize] = useState(72);
-  const [topRatio, setTopRatio] = useState(0.3); // 상단 비율 (0.1 ~ 0.6)
-  const [headerText, setHeaderText] = useState("");
-
-  // videoTitle(어그로 제목) 우선, 없으면 storyTopic — 사용자가 수정 안 했을 때만 자동 채움
-  useEffect(() => {
-    setHeaderText((cur) => cur || videoTitle || storyTopic || "");
-  }, [videoTitle, storyTopic]);
-
-  // 비율을 짝수 픽셀로 정렬 (libx264는 짝수 해상도 요구)
-  const TOP_HEIGHT =
-    Math.round((TEMPLATE.height * topRatio) / 2) * 2;
-  const BOTTOM_HEIGHT = TEMPLATE.height - TOP_HEIGHT;
-
-  const [ttsLoading, setTtsLoading] = useState(false);
-  const [composeLoading, setComposeLoading] = useState(false);
-  const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
+  const [downloadProgress, setDownloadProgress] = useState("");
 
-  // 미리보기
-  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const ffmpegRef = useRef<FFmpeg | null>(null);
+  const headerTextResolved = (videoTitle || storyTopic || "").trim();
 
-  // 씬 순서 및 씬별 길이 (편집)
-  const [sceneOrder, setSceneOrder] = useState<number[]>([]);
-  const [sceneDurations, setSceneDurations] = useState<Record<number, number>>(
-    {},
-  );
-
-  // 씬 데이터 변경 시 순서/길이 초기화
-  useEffect(() => {
-    if (generatedScenes.length === 0) return;
-    setSceneOrder((prev) => {
-      const fresh = generatedScenes.map((s) => s.index);
-      // 이미 동일하면 유지
-      if (
-        prev.length === fresh.length &&
-        prev.every((v, i) => v === fresh[i])
-      ) {
-        return prev;
-      }
-      return fresh;
-    });
-    setSceneDurations((prev) => {
-      const next: Record<number, number> = { ...prev };
-      for (const s of generatedScenes) {
-        if (next[s.index] === undefined) next[s.index] = s.durationSec || 10;
-      }
-      return next;
-    });
-  }, [generatedScenes]);
-
-  // 씬 또는 클립 변동 시 자막 자동 초기화 (사용자 편집 보존 — 클립 수가 그대로면 안 건드림)
+  // 자동 자막 분할 (script.txt 채워주는 용)
   useEffect(() => {
     if (generatedScenes.length === 0) return;
     setClipCaptions((prev) => {
@@ -293,136 +109,25 @@ export default function FinalizePage() {
     });
   }, [generatedScenes, selectedSceneAssets, setClipCaptions]);
 
-  // 캐시 통계
-  const [cacheStats, setCacheStats] = useState<{
-    count: number;
-    totalBytes: number;
-  } | null>(null);
-  const refreshCacheStats = async () => {
-    setCacheStats(await getCacheStats());
-  };
-  useEffect(() => {
-    refreshCacheStats();
-  }, []);
-
-  const moveScene = (sceneIdx: number, delta: -1 | 1) => {
-    setSceneOrder((prev) => {
-      const pos = prev.indexOf(sceneIdx);
-      if (pos < 0) return prev;
-      const newPos = pos + delta;
-      if (newPos < 0 || newPos >= prev.length) return prev;
-      const next = [...prev];
-      [next[pos], next[newPos]] = [next[newPos], next[pos]];
-      return next;
-    });
-  };
-
-  const setSceneDuration = (sceneIdx: number, dur: number) => {
-    setSceneDurations((prev) => ({ ...prev, [sceneIdx]: dur }));
-  };
-
-  const totalDurationCustom = sceneOrder.reduce(
-    (sum, idx) => sum + (sceneDurations[idx] || 10),
+  const totalDuration = generatedScenes.reduce(
+    (s, sc) => s + (sc.durationSec || 10),
+    0,
+  );
+  const totalClips = generatedScenes.reduce(
+    (s, sc) => s + (selectedSceneAssets[sc.index] || []).length,
     0,
   );
 
-  const allReady =
-    generatedScenes.length > 0 &&
-    generatedScenes.every(
-      (s) => (selectedSceneAssets[s.index] || []).length > 0,
-    );
-
-  const fullScript = generatedScenes.map((s) => s.text).join(" ");
-  const totalDuration = totalDurationCustom || 0;
-
-  const headerTextResolved = (headerText || storyTopic || "").trim();
-
-  // 라이브 미리보기 (씬 1)
-  useEffect(() => {
-    const canvas = previewCanvasRef.current;
-    if (!canvas || generatedScenes.length === 0) return;
-    canvas.width = 360;
-    canvas.height = 640;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    // 배경 (전체)
-    ctx.fillStyle = "#1a1a1a";
-    ctx.fillRect(0, 0, 360, 640);
-    // 상단 영역
-    const topH = Math.round(640 * topRatio);
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(0, 0, 360, topH);
-    // 텍스트
-    ctx.fillStyle = textColor;
-    const previewFontSize = Math.round(fontSize * 0.5);
-    ctx.font = `900 ${previewFontSize}px "Apple SD Gothic Neo", "Noto Sans KR", sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    const padding = 20;
-    const lines = wrapText(ctx, headerTextResolved, 360 - padding * 2);
-    const lineHeight = previewFontSize * 1.25;
-    const startY = topH / 2 - ((lines.length - 1) * lineHeight) / 2;
-    lines.forEach((line, i) => {
-      ctx.fillText(line, 360 / 2, startY + i * lineHeight);
-    });
-    // 하단 영역 placeholder
-    ctx.fillStyle = "#333";
-    ctx.fillRect(0, topH, 360, 640 - topH);
-    ctx.fillStyle = "#888";
-    ctx.font = "16px sans-serif";
-    ctx.fillText("[ 영상/이미지 영역 ]", 180, topH + (640 - topH) / 2);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgColor, textColor, fontSize, headerTextResolved, generatedScenes, topRatio]);
-
-  const handleTts = async () => {
-    setError("");
-    setTtsLoading(true);
-    try {
-      const res = await authFetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: fullScript, emotionTone: "normal-1" }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "TTS 실패");
-      setTtsAudioUrl(data.audioUrl);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "오류");
-    } finally {
-      setTtsLoading(false);
-    }
-  };
-
-  const ensureFfmpeg = async () => {
-    if (ffmpegRef.current) return ffmpegRef.current;
-    const ffmpeg = new FFmpeg();
-    ffmpeg.on("log", ({ message }) => {
-      if (message.includes("time=")) {
-        setProgress(message.slice(0, 100));
-      }
-    });
-    const base = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm";
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, "text/javascript"),
-      wasmURL: await toBlobURL(
-        `${base}/ffmpeg-core.wasm`,
-        "application/wasm",
-      ),
-    });
-    ffmpegRef.current = ffmpeg;
-    return ffmpeg;
-  };
-
+  // === 미디어 다운로드 헬퍼 (IndexedDB 캐시 활용) ===
   const downloadAndProxy = async (url: string): Promise<Uint8Array> => {
-    // 1) IndexedDB 캐시 확인
     const cached = await getCachedAsset(url);
     if (cached) return cached.bytes;
-
-    // 2) 다운로드
     let bytes: Uint8Array;
     let ct = "application/octet-stream";
     try {
-      const res = await fetch(`/api/proxy-asset?url=${encodeURIComponent(url)}`);
+      const res = await fetch(
+        `/api/proxy-asset?url=${encodeURIComponent(url)}`,
+      );
       if (!res.ok) throw new Error("proxy fetch failed");
       ct = res.headers.get("content-type") || ct;
       const buf = await res.arrayBuffer();
@@ -431,14 +136,13 @@ export default function FinalizePage() {
       const data = await fetchFile(url);
       bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
     }
-
-    // 3) 캐시 저장 (best-effort)
     void setCachedAsset(url, bytes, ct);
-    void refreshCacheStats();
     return bytes;
   };
 
-  const downloadVideoCached = async (videoUrl: string): Promise<Uint8Array> => {
+  const downloadVideoCached = async (
+    videoUrl: string,
+  ): Promise<Uint8Array> => {
     const cacheKey = `video::${videoUrl}`;
     const cached = await getCachedAsset(cacheKey);
     if (cached) return cached.bytes;
@@ -449,636 +153,308 @@ export default function FinalizePage() {
     const buf = await res.arrayBuffer();
     const bytes = new Uint8Array(buf);
     void setCachedAsset(cacheKey, bytes, "video/mp4");
-    void refreshCacheStats();
     return bytes;
   };
 
-  const handleCompose = async () => {
-    setError("");
-    setFinalVideoUrl(null);
-    setComposeLoading(true);
-    setProgress("FFmpeg 로드 중...");
-    try {
-      const ffmpeg = await ensureFfmpeg();
+  // === 대본 텍스트 빌드 ===
+  const buildScriptText = (): string => {
+    const lines: string[] = [];
+    lines.push("=".repeat(60));
+    lines.push(`영상 제목: ${headerTextResolved || "(제목 없음)"}`);
+    lines.push(`상품: ${productName || "—"}`);
+    lines.push(`총 길이: ${totalDuration}초`);
+    lines.push(`씬: ${generatedScenes.length}개 · 클립: ${totalClips}개`);
+    lines.push("=".repeat(60));
+    lines.push("");
 
-      const sceneClips: string[] = [];
+    generatedScenes.forEach((scene, pos) => {
+      const dur = scene.durationSec || 10;
+      const assets = selectedSceneAssets[scene.index] || [];
+      const captions = clipCaptions[scene.index] || [];
+      const perClip = assets.length > 0 ? dur / assets.length : 0;
 
-      const orderedScenes = sceneOrder
-        .map((sceneIdx) => generatedScenes.find((s) => s.index === sceneIdx))
-        .filter((s): s is NonNullable<typeof s> => !!s);
-
-      for (let i = 0; i < orderedScenes.length; i++) {
-        const scene = orderedScenes[i];
-        const assets = selectedSceneAssets[scene.index] || [];
-        if (assets.length === 0)
-          throw new Error(`씬 ${scene.index + 1}에 소재 없음`);
-
-        const dur = sceneDurations[scene.index] || scene.durationSec || 10;
-        const perAsset = Math.max(1, Math.floor(dur / Math.max(1, assets.length)));
-        // 이 변수 사용 — i 가 ordered position (file 이름 prefix 용)
-        void i;
-
-        // 1) 상단 타이틀 바 PNG (Canvas)
-        setProgress(`씬 ${i + 1}/${generatedScenes.length} · 타이틀 렌더`);
-        const titlePng = await renderTitleBarPng({
-          width: TEMPLATE.width,
-          height: TOP_HEIGHT,
-          text: headerTextResolved,
-          bgColor,
-          textColor,
-          fontSize,
+      lines.push(`[씬 ${pos + 1}] ${scene.emotion} · ${dur}초`);
+      lines.push(`대본: ${scene.text}`);
+      lines.push("");
+      if (assets.length > 0) {
+        lines.push(`  클립 ${assets.length}개 (각 ${perClip.toFixed(1)}초):`);
+        assets.forEach((asset, idx) => {
+          const kind = assetSourceLabel(asset);
+          const url = assetOriginalUrl(asset);
+          lines.push(`    [${idx + 1}] ${kind}`);
+          lines.push(`        자막: ${captions[idx] || "(없음)"}`);
+          lines.push(
+            `        파일: scene-${String(pos + 1).padStart(2, "0")}/clip-${String(idx + 1).padStart(2, "0")}`,
+          );
+          if (url) lines.push(`        원본: ${url}`);
         });
-        await ffmpeg.writeFile(`title_${i}.png`, titlePng);
+      }
+      lines.push("");
+    });
 
-        // 2) 하단 영역 — 각 소재를 720x896 클립으로 정규화 후 concat
-        //    영상 자산: 실제 영상 다운로드 → 처음부터 perAsset 초만 사용
-        //    이미지 자산: Ken Burns 효과로 perAsset 초 클립 생성
-        const bottomClips: string[] = [];
+    return lines.join("\n");
+  };
+
+  const triggerDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
+
+  const safeFileName = (s: string, fallback: string): string => {
+    const cleaned = s.replace(/[^\p{L}\p{N}_-]+/gu, "-").slice(0, 60);
+    return cleaned || fallback;
+  };
+
+  const downloadScriptOnly = () => {
+    const txt = buildScriptText();
+    const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
+    triggerDownload(
+      blob,
+      `${safeFileName(headerTextResolved, "shorts-script")}.txt`,
+    );
+  };
+
+  const guessExt = (url: string): string => {
+    const m = url.match(/\.(jpg|jpeg|png|webp|gif|mp4|mov|webm)(\?|$)/i);
+    if (m) return m[1].toLowerCase() === "jpeg" ? "jpg" : m[1].toLowerCase();
+    return "jpg";
+  };
+
+  const downloadAllSources = async () => {
+    setError("");
+    setDownloadProgress("ZIP 만들기 시작...");
+    try {
+      const zip = new JSZip();
+
+      // 1) 대본
+      zip.file("script.txt", buildScriptText());
+
+      // 2) 씬별 클립
+      for (let pos = 0; pos < generatedScenes.length; pos++) {
+        const scene = generatedScenes[pos];
+        const assets = selectedSceneAssets[scene.index] || [];
+        if (assets.length === 0) continue;
+        const sceneDir = `scene-${String(pos + 1).padStart(2, "0")}`;
+
         for (let j = 0; j < assets.length; j++) {
           const a = assets[j];
-          const videoUrl = assetToVideoUrl(a);
-          const bottomName = `b${i}_${j}.mp4`;
-          let built = false;
-
-          if (videoUrl) {
-            // 영상 다운로드 시도 (캐시 우선)
-            setProgress(
-              `씬 ${i + 1} · 영상 ${j + 1}/${assets.length} 로드`,
-            );
-            try {
-              const buf = await downloadVideoCached(videoUrl);
-              const inName = `vs${i}_${j}.mp4`;
-              await ffmpeg.writeFile(inName, buf);
-
-              setProgress(`씬 ${i + 1} · 영상 ${j + 1} 클립화...`);
-              await ffmpeg.exec([
-                "-y",
-                "-ss",
-                "0",
-                "-t",
-                String(perAsset),
-                "-i",
-                inName,
-                "-vf",
-                `scale=${TEMPLATE.width}:${BOTTOM_HEIGHT}:force_original_aspect_ratio=increase,crop=${TEMPLATE.width}:${BOTTOM_HEIGHT},fps=${TEMPLATE.fps}`,
-                "-c:v",
-                "libx264",
-                "-preset",
-                "ultrafast",
-                "-pix_fmt",
-                "yuv420p",
-                "-an",
-                bottomName,
-              ]);
-              built = true;
-            } catch (err) {
-              // 다운로드 실패 → 썸네일 fallback
-              setProgress(
-                `씬 ${i + 1} · 영상 다운로드 실패 (${err instanceof Error ? err.message : "오류"}), 썸네일로 대체`,
-              );
+          const clipPrefix = `clip-${String(j + 1).padStart(2, "0")}`;
+          setDownloadProgress(
+            `씬 ${pos + 1}/${generatedScenes.length} · 클립 ${j + 1}/${assets.length} 다운로드`,
+          );
+          try {
+            if (a.kind === "youtube-short") {
+              const bytes = await downloadVideoCached(a.watchUrl);
+              zip.file(`${sceneDir}/${clipPrefix}.mp4`, bytes);
+            } else if (a.kind === "web-image") {
+              if (a.imageUrl.startsWith("data:")) {
+                // AI 생성 dataUrl
+                const m = a.imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+                if (m) {
+                  const ct = m[1];
+                  const ext = ct.includes("png")
+                    ? "png"
+                    : ct.includes("webp")
+                      ? "webp"
+                      : "jpg";
+                  const bin = Uint8Array.from(atob(m[2]), (c) =>
+                    c.charCodeAt(0),
+                  );
+                  zip.file(`${sceneDir}/${clipPrefix}-AI.${ext}`, bin);
+                }
+              } else {
+                const bytes = await downloadAndProxy(a.imageUrl);
+                const ext = guessExt(a.imageUrl);
+                zip.file(`${sceneDir}/${clipPrefix}.${ext}`, bytes);
+              }
+            } else if (a.kind === "tiktok") {
+              const url = a.playUrl || a.watchUrl;
+              const bytes = await downloadAndProxy(url);
+              zip.file(`${sceneDir}/${clipPrefix}.mp4`, bytes);
             }
-          }
-
-          if (!built) {
-            // 이미지 (또는 영상 다운로드 실패 시 썸네일)
-            const imgUrl = assetToImageUrl(a);
-            if (!imgUrl) continue;
-            setProgress(
-              `씬 ${i + 1} · 이미지 ${j + 1}/${assets.length} 다운로드`,
+          } catch (e) {
+            zip.file(
+              `${sceneDir}/${clipPrefix}-FAILED.txt`,
+              `다운로드 실패: ${e instanceof Error ? e.message : "오류"}\n원본 URL: ${assetOriginalUrl(a)}`,
             );
-            const bytes = await downloadAndProxy(imgUrl);
-            const ext =
-              imgUrl
-                .match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i)?.[1]
-                ?.toLowerCase() || "jpg";
-            const inName = `s${i}_${j}.${ext}`;
-            await ffmpeg.writeFile(inName, bytes);
-
-            await ffmpeg.exec([
-              "-y",
-              "-loop",
-              "1",
-              "-framerate",
-              String(TEMPLATE.fps),
-              "-i",
-              inName,
-              "-t",
-              String(perAsset),
-              "-vf",
-              `scale=${Math.round(TEMPLATE.width * 1.1)}:${Math.round(BOTTOM_HEIGHT * 1.1)}:force_original_aspect_ratio=increase,crop=${TEMPLATE.width}:${BOTTOM_HEIGHT},zoompan=z='min(zoom+0.0008,1.15)':d=${perAsset * TEMPLATE.fps}:s=${TEMPLATE.width}x${BOTTOM_HEIGHT}:fps=${TEMPLATE.fps}`,
-              "-c:v",
-              "libx264",
-              "-preset",
-              "ultrafast",
-              "-pix_fmt",
-              "yuv420p",
-              "-an",
-              bottomName,
-            ]);
-            built = true;
-          }
-
-          if (!built) continue;
-
-          // 자막 PNG overlay (있을 때만)
-          const captionText =
-            (clipCaptions[scene.index] || [])[j]?.trim() || "";
-          if (captionText) {
-            setProgress(
-              `씬 ${i + 1} · 자막 입히기 ${j + 1}/${assets.length}...`,
-            );
-            const capPng = await renderCaptionPng({
-              width: TEMPLATE.width,
-              height: TEMPLATE.captionHeight,
-              text: captionText,
-              fontSize: TEMPLATE.captionFontSize,
-            });
-            const capName = `cap${i}_${j}.png`;
-            await ffmpeg.writeFile(capName, capPng);
-
-            const captionedName = `bc${i}_${j}.mp4`;
-            const overlayY = BOTTOM_HEIGHT - TEMPLATE.captionHeight;
-            await ffmpeg.exec([
-              "-y",
-              "-i",
-              bottomName,
-              "-i",
-              capName,
-              "-filter_complex",
-              `[0:v][1:v]overlay=0:${overlayY}:format=auto`,
-              "-c:v",
-              "libx264",
-              "-preset",
-              "ultrafast",
-              "-pix_fmt",
-              "yuv420p",
-              "-an",
-              captionedName,
-            ]);
-            bottomClips.push(captionedName);
-          } else {
-            bottomClips.push(bottomName);
           }
         }
-
-        // 하단 클립 concat
-        const bottomConcat = `bottom_${i}.mp4`;
-        if (bottomClips.length === 1) {
-          await ffmpeg.exec([
-            "-y",
-            "-i",
-            bottomClips[0],
-            "-c",
-            "copy",
-            bottomConcat,
-          ]);
-        } else {
-          const list = bottomClips.map((n) => `file '${n}'`).join("\n");
-          await ffmpeg.writeFile(`blist_${i}.txt`, list);
-          await ffmpeg.exec([
-            "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            `blist_${i}.txt`,
-            "-c",
-            "copy",
-            bottomConcat,
-          ]);
-        }
-
-        // 3) 타이틀 PNG → 비디오 클립 (씬 전체 길이)
-        const titleClip = `title_${i}.mp4`;
-        await ffmpeg.exec([
-          "-y",
-          "-loop",
-          "1",
-          "-framerate",
-          String(TEMPLATE.fps),
-          "-i",
-          `title_${i}.png`,
-          "-t",
-          String(dur),
-          "-vf",
-          `scale=${TEMPLATE.width}:${TOP_HEIGHT},fps=${TEMPLATE.fps}`,
-          "-c:v",
-          "libx264",
-          "-preset",
-          "ultrafast",
-          "-pix_fmt",
-          "yuv420p",
-          "-an",
-          titleClip,
-        ]);
-
-        // 4) vstack: 타이틀(상단) + 소재(하단)
-        setProgress(`씬 ${i + 1} · 합치기`);
-        const sceneOut = `scene_${i}.mp4`;
-        await ffmpeg.exec([
-          "-y",
-          "-i",
-          titleClip,
-          "-i",
-          bottomConcat,
-          "-filter_complex",
-          "[0:v][1:v]vstack=inputs=2[v]",
-          "-map",
-          "[v]",
-          "-c:v",
-          "libx264",
-          "-preset",
-          "ultrafast",
-          "-pix_fmt",
-          "yuv420p",
-          sceneOut,
-        ]);
-        sceneClips.push(sceneOut);
       }
 
-      // 5) 모든 씬 concat
-      setProgress("전체 씬 이어붙이는 중...");
-      const list = sceneClips.map((n) => `file '${n}'`).join("\n");
-      await ffmpeg.writeFile("scenes.txt", list);
-      await ffmpeg.exec([
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        "scenes.txt",
-        "-c",
-        "copy",
-        "concat.mp4",
-      ]);
-
-      let videoSrc = "concat.mp4";
-
-      // 6) TTS 오디오 mux
-      if (ttsAudioUrl) {
-        setProgress("TTS 합성 중...");
-        await ffmpeg.writeFile(
-          "tts.mp3",
-          await downloadAndProxy(ttsAudioUrl),
-        );
-        await ffmpeg.exec([
-          "-i",
-          videoSrc,
-          "-i",
-          "tts.mp3",
-          "-filter_complex",
-          `[1:a]volume=${TEMPLATE.ttsVolume}[aTts]`,
-          "-map",
-          "0:v",
-          "-map",
-          "[aTts]",
-          "-c:v",
-          "copy",
-          "-c:a",
-          "aac",
-          "-shortest",
-          "final.mp4",
-        ]);
-        videoSrc = "final.mp4";
-      }
-
-      setProgress("MP4 마무리...");
-      const data = await ffmpeg.readFile(videoSrc);
-      const bytes =
-        data instanceof Uint8Array
-          ? new Uint8Array(data)
-          : new TextEncoder().encode(data);
-      const blob = new Blob([bytes.buffer as ArrayBuffer], {
-        type: "video/mp4",
-      });
-      const url = URL.createObjectURL(blob);
-      setFinalVideoUrl(url);
-      setProgress("✅ 완료");
+      setDownloadProgress("ZIP 압축 중...");
+      const blob = await zip.generateAsync(
+        { type: "blob", compression: "STORE" },
+        (meta) => {
+          setDownloadProgress(`ZIP 압축 ${meta.percent.toFixed(0)}%`);
+        },
+      );
+      triggerDownload(
+        blob,
+        `${safeFileName(headerTextResolved, "shorts-sources")}.zip`,
+      );
+      setDownloadProgress("✅ 다운로드 완료");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "합성 오류");
-    } finally {
-      setComposeLoading(false);
+      setError(e instanceof Error ? e.message : "다운로드 실패");
+      setDownloadProgress("");
     }
   };
 
-  if (!allReady) {
+  // === 미리보기 ===
+  if (generatedScenes.length === 0) {
     return (
-      <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-amber-800 dark:text-amber-200 text-sm rounded-lg px-4 py-3">
-        ⚠️ 모든 씬에 소재가 선택되어야 합성 가능합니다.{" "}
-        <Link href="/create/analyze" className="underline">
-          2단계로 돌아가
+      <div className="bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-300 dark:border-yellow-800 rounded-xl p-8 text-center">
+        <h2 className="font-semibold mb-2">대본이 없습니다</h2>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+          먼저 분석 페이지에서 대본을 생성하고 컷을 구성해주세요.
+        </p>
+        <Link
+          href="/create/analyze"
+          className="inline-block bg-red-500 hover:bg-red-600 text-white text-sm font-semibold px-4 py-2 rounded-lg"
+        >
+          ← 분석 페이지로
         </Link>
-        서 각 씬에 소재를 1개 이상 선택해주세요.
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-        <h2 className="font-semibold mb-2">📋 합성 요약</h2>
-        <div className="text-xs text-zinc-500 space-y-0.5">
-          <div>
-            제품:{" "}
-            <span className="font-medium text-zinc-700 dark:text-zinc-300">
-              {productName}
+      {/* 다운로드 — 핵심 액션 */}
+      <section className="bg-gradient-to-br from-emerald-50 to-sky-50 dark:from-emerald-950/20 dark:to-sky-950/20 border border-emerald-300 dark:border-emerald-900/50 rounded-xl p-6">
+        <h2 className="font-semibold mb-2 text-lg">
+          📥 대본 + 소스 다운로드
+        </h2>
+        <p className="text-xs text-zinc-600 dark:text-zinc-400 mb-4">
+          영상 편집은 CapCut · Premiere Pro · DaVinci Resolve 같은 외부
+          편집기에서 진행하세요. ZIP 안에:
+        </p>
+        <ul className="text-xs text-zinc-600 dark:text-zinc-400 mb-4 list-disc list-inside space-y-0.5">
+          <li>
+            <code className="bg-zinc-100 dark:bg-zinc-800 px-1 rounded">
+              script.txt
+            </code>{" "}
+            — 영상 제목, 씬별 대본, 클립별 자막, 원본 URL
+          </li>
+          <li>
+            <code className="bg-zinc-100 dark:bg-zinc-800 px-1 rounded">
+              scene-01/, scene-02/, ...
+            </code>{" "}
+            — 씬별 폴더, 안에 clip-01, clip-02 형식의 미디어 파일
+          </li>
+          <li>
+            클립 미디어: 📰 기사 사진 · 🎬 YouTube mp4 · 🖼️ Bing 사진 · 🎨 AI
+            이미지
+          </li>
+        </ul>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={downloadScriptOnly}
+            disabled={!!downloadProgress}
+            className="bg-zinc-700 hover:bg-zinc-800 disabled:bg-zinc-300 text-white text-sm font-semibold px-4 py-2 rounded-lg"
+          >
+            📄 대본만 (.txt)
+          </button>
+          <button
+            type="button"
+            onClick={downloadAllSources}
+            disabled={!!downloadProgress}
+            className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-400 text-white text-sm font-semibold px-5 py-2 rounded-lg"
+          >
+            📦 전체 소스 (.zip) — 추천
+          </button>
+          {downloadProgress && (
+            <span className="text-xs text-emerald-700 dark:text-emerald-300">
+              {downloadProgress}
             </span>
-          </div>
-          <div>주제: {storyTopic || "—"}</div>
-          <div>
-            씬 {generatedScenes.length}개 · 총 {totalDuration}초 ({TEMPLATE.width}×
-            {TEMPLATE.height}, {TEMPLATE.fps}fps)
-          </div>
+          )}
         </div>
-      </section>
-
-      {/* 템플릿 에디터 */}
-      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-        <h2 className="font-semibold mb-3">🎨 템플릿 (상단 30% / 하단 70%)</h2>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* 미리보기 */}
-          <div>
-            <div className="text-xs text-zinc-500 mb-1">씬 1 미리보기</div>
-            <canvas
-              ref={previewCanvasRef}
-              className="w-full max-w-[180px] aspect-[9/16] rounded border border-zinc-200 dark:border-zinc-800 bg-black"
-            />
-          </div>
-
-          {/* 컨트롤 */}
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs font-medium mb-1">
-                상단 배경색
-              </label>
-              <div className="flex gap-2 items-center">
-                <input
-                  type="color"
-                  value={bgColor}
-                  onChange={(e) => setBgColor(e.target.value)}
-                  className="w-10 h-10 rounded cursor-pointer border border-zinc-300 dark:border-zinc-700"
-                />
-                <input
-                  type="text"
-                  value={bgColor}
-                  onChange={(e) => setBgColor(e.target.value)}
-                  className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded px-2 py-1 text-xs font-mono"
-                />
-                <div className="flex gap-1">
-                  {["#FFE600", "#FF3B30", "#000000", "#FFFFFF", "#0070F3"].map(
-                    (c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => setBgColor(c)}
-                        className="w-6 h-6 rounded border border-zinc-300 dark:border-zinc-700"
-                        style={{ background: c }}
-                        title={c}
-                      />
-                    ),
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium mb-1">텍스트 색</label>
-              <div className="flex gap-2 items-center">
-                <input
-                  type="color"
-                  value={textColor}
-                  onChange={(e) => setTextColor(e.target.value)}
-                  className="w-10 h-10 rounded cursor-pointer border border-zinc-300 dark:border-zinc-700"
-                />
-                <input
-                  type="text"
-                  value={textColor}
-                  onChange={(e) => setTextColor(e.target.value)}
-                  className="flex-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded px-2 py-1 text-xs font-mono"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium mb-1">
-                폰트 크기: {fontSize}px
-              </label>
-              <input
-                type="range"
-                min={40}
-                max={120}
-                step={4}
-                value={fontSize}
-                onChange={(e) => setFontSize(parseInt(e.target.value, 10))}
-                className="w-full accent-red-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium mb-1">
-                상단 비율: {Math.round(topRatio * 100)}% / 하단{" "}
-                {Math.round((1 - topRatio) * 100)}%
-              </label>
-              <input
-                type="range"
-                min={0.1}
-                max={0.6}
-                step={0.05}
-                value={topRatio}
-                onChange={(e) => setTopRatio(parseFloat(e.target.value))}
-                className="w-full accent-red-500"
-              />
-              <div className="mt-1 flex flex-wrap gap-1">
-                {[
-                  { v: 0.2, label: "2:8" },
-                  { v: 0.3, label: "3:7" },
-                  { v: 0.4, label: "4:6" },
-                  { v: 0.5, label: "5:5" },
-                ].map((p) => (
-                  <button
-                    key={p.label}
-                    type="button"
-                    onClick={() => setTopRatio(p.v)}
-                    className={`text-[10px] px-2 py-0.5 rounded ${
-                      Math.abs(topRatio - p.v) < 0.01
-                        ? "bg-red-500 text-white"
-                        : "bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                    }`}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* 헤더 텍스트 (모든 씬 동일 — 주제 자동 입력) */}
-        <div className="mt-4 border-t border-zinc-200 dark:border-zinc-800 pt-3">
-          <label className="block text-xs font-medium mb-1">
-            상단 헤더 텍스트{" "}
-            <span className="text-zinc-500">
-              (모든 씬에 동일하게 표시 — 비우면 주제 사용)
-            </span>
-          </label>
-          <input
-            type="text"
-            value={headerText}
-            onChange={(e) => setHeaderText(e.target.value)}
-            placeholder={videoTitle || storyTopic || "예: 왜 동그란 모양일까?"}
-            className="w-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded-lg px-3 py-2 text-sm"
-          />
-        </div>
-      </section>
-
-      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-        <h2 className="font-semibold mb-2">🎤 TTS (Typecast)</h2>
-        <div className="text-xs text-zinc-500 mb-2">
-          전체 대본: {fullScript.length}자
-        </div>
-        <button
-          onClick={handleTts}
-          disabled={ttsLoading}
-          className="bg-red-500 hover:bg-red-600 disabled:bg-zinc-400 text-white text-sm font-semibold px-4 py-2 rounded-lg"
-        >
-          {ttsLoading ? "합성 중..." : ttsAudioUrl ? "🔄 다시 합성" : "🎤 TTS 생성"}
-        </button>
-        {ttsAudioUrl && (
-          <audio controls src={ttsAudioUrl} className="mt-3 w-full" />
+        {error && (
+          <p className="mt-3 text-sm text-red-600 dark:text-red-400">
+            ⚠️ {error}
+          </p>
         )}
       </section>
 
-      {/* 타임라인 에디터 — CapCut 스타일 */}
+      {/* 영상 정보 요약 */}
       <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <h2 className="font-semibold mb-3">📋 영상 정보</h2>
+        <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm">
           <div>
-            <h2 className="font-semibold">🎞 타임라인 편집</h2>
-            <p className="text-xs text-zinc-500 mt-1">
-              씬마다 클립이 줄지어 재생됩니다. 각 클립 아래 자막을 직접 수정 ·
-              씬 길이 슬라이더 · ↑↓ 로 씬 순서 변경.
-            </p>
+            <dt className="text-xs text-zinc-500">영상 제목</dt>
+            <dd className="font-medium">
+              {headerTextResolved || "(제목 없음)"}
+            </dd>
           </div>
-          <div className="text-xs text-zinc-500">
-            총 길이: <b>{totalDurationCustom}초</b>
+          <div>
+            <dt className="text-xs text-zinc-500">상품</dt>
+            <dd>{productName || "—"}</dd>
           </div>
-        </div>
+          <div>
+            <dt className="text-xs text-zinc-500">씬</dt>
+            <dd>{generatedScenes.length}개</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-zinc-500">예상 길이</dt>
+            <dd>{totalDuration}초</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-zinc-500">총 클립</dt>
+            <dd>{totalClips}개</dd>
+          </div>
+        </dl>
+      </section>
 
-        <div className="space-y-4">
-          {sceneOrder.map((sceneIdx, pos) => {
-            const scene = generatedScenes.find((s) => s.index === sceneIdx);
-            if (!scene) return null;
-            const dur = sceneDurations[sceneIdx] || 10;
-            const assets = selectedSceneAssets[sceneIdx] || [];
-            const captions = clipCaptions[sceneIdx] || [];
-            const perClip = assets.length > 0 ? dur / assets.length : 0;
+      {/* 씬 미리보기 — 다운로드될 내용 확인용 (편집 X) */}
+      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+        <h2 className="font-semibold mb-3">
+          🎞 다운로드 미리보기 ({generatedScenes.length}개 씬)
+        </h2>
+        <div className="space-y-3">
+          {generatedScenes.map((scene, pos) => {
+            const assets = selectedSceneAssets[scene.index] || [];
+            const captions = clipCaptions[scene.index] || [];
             return (
               <div
-                key={sceneIdx}
+                key={scene.index}
                 className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-3 bg-zinc-50/50 dark:bg-zinc-900/50"
               >
-                {/* 씬 헤더 */}
-                <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="font-bold text-sm">씬 {pos + 1}</span>
-                    <span className="text-zinc-400">·</span>
-                    <span className="text-red-500">{scene.emotion}</span>
-                    <span className="text-zinc-400">·</span>
-                    <span className="text-zinc-500">
-                      클립 {assets.length}개 × {perClip.toFixed(1)}초
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => moveScene(sceneIdx, -1)}
-                      disabled={pos === 0}
-                      className="text-xs px-2 py-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-40 rounded"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => moveScene(sceneIdx, 1)}
-                      disabled={pos === sceneOrder.length - 1}
-                      className="text-xs px-2 py-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-40 rounded"
-                    >
-                      ↓
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        // 자막 자동 재분할 (수동 편집 리셋)
-                        setClipCaptions((prev) => ({
-                          ...prev,
-                          [sceneIdx]: splitTextIntoChunks(
-                            scene.text,
-                            assets.length,
-                          ),
-                        }));
-                      }}
-                      disabled={assets.length === 0}
-                      className="text-[10px] px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50 disabled:opacity-40 rounded"
-                      title="자막을 대본 기준으로 자동 재분할"
-                    >
-                      🔄 자막 재분할
-                    </button>
-                  </div>
-                </div>
-
-                {/* 씬 길이 슬라이더 */}
-                <div className="mb-2 flex items-center gap-2">
-                  <span className="text-[10px] text-zinc-500">길이</span>
-                  <input
-                    type="range"
-                    min={3}
-                    max={20}
-                    step={1}
-                    value={dur}
-                    onChange={(e) =>
-                      setSceneDuration(
-                        sceneIdx,
-                        parseInt(e.target.value, 10),
-                      )
-                    }
-                    className="flex-1 accent-red-500"
-                  />
-                  <span className="text-xs font-mono w-10 text-right">
-                    {dur}초
+                <div className="flex items-center gap-2 text-xs mb-1">
+                  <span className="font-bold text-sm">
+                    씬 {pos + 1}
+                  </span>
+                  <span className="text-zinc-400">·</span>
+                  <span className="text-red-500">{scene.emotion}</span>
+                  <span className="text-zinc-400">·</span>
+                  <span className="text-zinc-500">
+                    {scene.durationSec || 10}초
+                  </span>
+                  <span className="text-zinc-400">·</span>
+                  <span className="text-zinc-500">
+                    클립 {assets.length}개
                   </span>
                 </div>
-
-                {/* 클립 타임라인 */}
-                {assets.length === 0 ? (
-                  <div className="text-xs text-zinc-500 italic py-3 text-center border border-dashed border-zinc-300 dark:border-zinc-700 rounded">
-                    이 씬에 클립이 없습니다. 분석 페이지로 돌아가서 자동 컷
-                    구성을 실행해주세요.
-                  </div>
-                ) : (
+                <p className="text-xs text-zinc-700 dark:text-zinc-300 mb-2 italic">
+                  &ldquo;{scene.text}&rdquo;
+                </p>
+                {assets.length > 0 ? (
                   <div className="flex gap-2 overflow-x-auto pb-1">
-                    {assets.map((asset, clipIdx) => {
+                    {assets.map((asset, idx) => {
                       const thumb = assetToImageUrl(asset);
-                      const isVideo = asset.kind === "youtube-short";
-                      const sourceLabel =
-                        asset.kind === "web-image"
-                          ? asset.siteName === "기사 원본"
-                            ? "📰 기사"
-                            : asset.siteName === "AI 생성"
-                              ? "🎨 AI"
-                              : "🖼️ 웹"
-                          : isVideo
-                            ? "🎬 YouTube"
-                            : "🎵";
-                      const caption = captions[clipIdx] ?? "";
                       return (
                         <div
-                          key={`${sceneIdx}-${clipIdx}`}
-                          className="shrink-0 w-36 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg overflow-hidden"
+                          key={`${scene.index}-${idx}`}
+                          className="shrink-0 w-24 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded overflow-hidden"
                         >
                           <div className="relative w-full aspect-[9/16] bg-zinc-100 dark:bg-zinc-800">
-                            {thumb ? (
+                            {thumb && (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img
                                 src={thumb}
@@ -1086,41 +462,25 @@ export default function FinalizePage() {
                                 loading="lazy"
                                 className="absolute inset-0 w-full h-full object-cover"
                               />
-                            ) : null}
-                            <div className="absolute top-1 left-1 bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">
-                              {clipIdx + 1}
+                            )}
+                            <div className="absolute top-0.5 left-0.5 bg-black/70 text-white text-[8px] px-1 py-0.5 rounded font-bold">
+                              {idx + 1}
                             </div>
-                            <div className="absolute top-1 right-1 bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded">
-                              {sourceLabel}
-                            </div>
-                            <div className="absolute bottom-1 left-1 bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded font-mono">
-                              {perClip.toFixed(1)}s
+                            <div className="absolute top-0.5 right-0.5 bg-black/70 text-white text-[8px] px-1 py-0.5 rounded">
+                              {assetSourceLabel(asset)}
                             </div>
                           </div>
-                          <textarea
-                            value={caption}
-                            onChange={(e) =>
-                              setClipCaptions((prev) => {
-                                const list = [
-                                  ...(prev[sceneIdx] ||
-                                    splitTextIntoChunks(
-                                      scene.text,
-                                      assets.length,
-                                    )),
-                                ];
-                                while (list.length < assets.length) list.push("");
-                                list[clipIdx] = e.target.value;
-                                return { ...prev, [sceneIdx]: list };
-                              })
-                            }
-                            placeholder="자막"
-                            rows={3}
-                            className="w-full text-[11px] p-1.5 border-0 border-t border-zinc-200 dark:border-zinc-800 bg-transparent resize-none focus:outline-none focus:ring-1 focus:ring-red-500"
-                          />
+                          <div className="p-1 text-[9px] text-zinc-700 dark:text-zinc-300 leading-tight line-clamp-3 min-h-8">
+                            {captions[idx] || "—"}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
+                ) : (
+                  <p className="text-xs text-zinc-400 italic">
+                    클립 없음 — 분석 페이지에서 자동 컷 구성을 실행해주세요.
+                  </p>
                 )}
               </div>
             );
@@ -1128,94 +488,13 @@ export default function FinalizePage() {
         </div>
       </section>
 
-      {/* 로컬 미디어 캐시 */}
-      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="font-semibold">💾 로컬 미디어 캐시</h2>
-            <p className="text-xs text-zinc-500 mt-1">
-              {cacheStats
-                ? `${cacheStats.count}개 항목 · ${(
-                    cacheStats.totalBytes /
-                    1024 /
-                    1024
-                  ).toFixed(1)} MB`
-                : "확인 중..."}{" "}
-              · 다운로드한 영상·이미지·오디오는 브라우저(IndexedDB)에 저장되어
-              재합성 시 재사용됩니다.
-            </p>
-          </div>
-          <div className="flex gap-1">
-            <button
-              type="button"
-              onClick={refreshCacheStats}
-              className="text-xs bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 px-2 py-1 rounded"
-            >
-              새로고침
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                if (!confirm("로컬 캐시를 모두 삭제할까요?")) return;
-                await clearAssetCache();
-                await refreshCacheStats();
-              }}
-              className="text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 px-2 py-1 rounded"
-            >
-              비우기
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-        <h2 className="font-semibold mb-2">🎬 최종 합성</h2>
-        <p className="text-xs text-zinc-500 mb-3">
-          템플릿 (상단 30% 색상+텍스트 / 하단 70% 영상·이미지) 적용 →
-          씬 이어붙이기 → TTS mux → MP4. 브라우저 안에서 처리.
-        </p>
-        <button
-          onClick={handleCompose}
-          disabled={composeLoading}
-          className="bg-red-500 hover:bg-red-600 disabled:bg-zinc-400 text-white font-semibold px-5 py-2 rounded-lg"
-        >
-          {composeLoading ? "합성 중..." : "🎬 영상 만들기"}
-        </button>
-        {progress && (
-          <div className="mt-2 text-xs text-zinc-500 font-mono">{progress}</div>
-        )}
-        {finalVideoUrl && (
-          <div className="mt-4">
-            <video
-              src={finalVideoUrl}
-              controls
-              className="w-full max-w-xs aspect-[9/16] rounded-lg bg-black mx-auto"
-            />
-            <div className="mt-3 text-center">
-              <a
-                href={finalVideoUrl}
-                download={`shorts-${Date.now()}.mp4`}
-                className="inline-block bg-green-600 hover:bg-green-700 text-white text-sm font-semibold px-5 py-2 rounded-lg"
-              >
-                ⬇️ MP4 다운로드
-              </a>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {error && (
-        <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900 rounded-lg px-4 py-3">
-          ⚠️ {error}
-        </div>
-      )}
-
+      {/* 네비 */}
       <div className="flex justify-between">
         <Link
           href="/create/analyze"
           className="text-sm text-zinc-500 hover:underline"
         >
-          ← 이전: 대본 + 소재
+          ← 이전: 분석
         </Link>
       </div>
     </div>

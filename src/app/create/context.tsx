@@ -59,6 +59,9 @@ export type ShotMedia = {
   videoId?: string;
   embedUrl?: string;
   watchUrl?: string;
+  // 짤 (jjalbang) — direct mp4/gif/webm URL
+  directVideoUrl?: string;
+  directVideoExt?: "mp4" | "gif" | "webm";
 };
 
 export type ShotEntry = {
