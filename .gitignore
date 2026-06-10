@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 자막 제거 결과 영상 (로컬 저장)
+/data/

@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/insta-tracker/check-feeds",
+      "schedule": "0 23 * * *"
+    },
+    {
+      "path": "/api/cron/cleanup-outputs",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/cleanup-insta-videos",
+      "schedule": "0 */6 * * *"
+    }
+  ]
+}

@@ -34,6 +34,10 @@ export async function GET(req: NextRequest) {
       { test: /daum/, ref: "https://www.daum.net/" },
       { test: /kakaocdn\.net/, ref: "https://www.kakao.com/" },
       { test: /tistory/, ref: "https://www.tistory.com/" },
+      // 인스타: CDN/fbcdn 도메인은 instagram.com referer 요구 (hotlink 보호)
+      { test: /cdninstagram\.com/, ref: "https://www.instagram.com/" },
+      { test: /fbcdn\.net/, ref: "https://www.instagram.com/" },
+      { test: /instagram\.com/, ref: "https://www.instagram.com/" },
     ];
     for (const r of REFERER_MAP) {
       if (r.test.test(u.hostname)) {

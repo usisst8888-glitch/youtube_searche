@@ -39,9 +39,11 @@ export type VideoStats = {
   isShorts: boolean;
   thumbnail: string;
   embeddable: boolean;
+  tags: string[];
 };
 
 export type OutlierResult = {
+  channelId: string;
   channelName: string;
   title: string;
   views: number;
@@ -55,6 +57,7 @@ export type OutlierResult = {
   thumbnail: string;
   subscriberCount: number;
   subscriberHidden: boolean;
+  tags: string[];
 };
 
 export type ChannelInfo = {
@@ -180,6 +183,7 @@ export async function getVideoStats(
         isShorts: dur > 0 && dur <= SHORTS_MAX_SEC,
         thumbnail: thumb,
         embeddable,
+        tags: Array.isArray(item.snippet.tags) ? item.snippet.tags : [],
       };
     }
   }

@@ -175,6 +175,7 @@ export async function POST(req: NextRequest) {
         const b = baseline[s.channelId];
         const ch = channelInfo[s.channelId];
         return {
+          channelId: s.channelId,
           channelName: s.channelTitle,
           title: stats.title,
           views: stats.views,
@@ -188,12 +189,13 @@ export async function POST(req: NextRequest) {
           thumbnail: stats.thumbnail,
           subscriberCount: ch?.subscriberCount ?? 0,
           subscriberHidden: ch?.subscriberHidden ?? false,
+          tags: stats.tags || [],
         };
       })
       .sort((a, b) => b.outlierScore - a.outlierScore);
 
     const outlierCount = rows.filter(
-      (r) => r.outlierScore >= outlierThreshold,
+      (r) => r.outlierScore >= outlierThreshold && r.views >= 10000,
     ).length;
 
     return NextResponse.json({

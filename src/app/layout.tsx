@@ -50,6 +50,42 @@ export default function RootLayout({
               >
                 ✨ 쇼츠 제작
               </Link>
+              <Link
+                href="/video-to-script"
+                className="px-3 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                🎞️ 영상→대본
+              </Link>
+              <Link
+                href="/longform-summary"
+                className="px-3 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                📚 롱폼 요약
+              </Link>
+              <Link
+                href="/shorts-playbook"
+                className="px-3 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                🚀 쇼츠 플레이북
+              </Link>
+              <Link
+                href="/insta-tracker"
+                className="px-3 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                📡 인스타 트래커
+              </Link>
+              <Link
+                href="/erase-subtitle"
+                className="px-3 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                🇨🇳 자막 제거
+              </Link>
+              <Link
+                href="/shorts-analyzer"
+                className="px-3 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                🎯 소재 분석
+              </Link>
             </div>
           </div>
         </nav>
