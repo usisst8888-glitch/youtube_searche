@@ -98,7 +98,7 @@ const POST_TYPE_LABEL: Record<string, string> = {
 
 // ───────────────────────────────────────────────────────────────────────
 export default function InstaTrackerPage() {
-  const [tab, setTab] = useState<"feeds" | "profiles">("feeds");
+  const [tab, setTab] = useState<"feeds" | "profiles" | "my">("feeds");
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
@@ -138,9 +138,25 @@ export default function InstaTrackerPage() {
         >
           프로필 관리
         </button>
+        <button
+          onClick={() => setTab("my")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
+            tab === "my"
+              ? "border-red-500 text-red-600 dark:text-red-400"
+              : "border-transparent text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+          }`}
+        >
+          🤖 내 분석
+        </button>
       </div>
 
-      {tab === "feeds" ? <FeedsTab /> : <ProfilesTab />}
+      {tab === "feeds" ? (
+        <FeedsTab />
+      ) : tab === "profiles" ? (
+        <ProfilesTab />
+      ) : (
+        <MyAnalysesTab />
+      )}
     </div>
   );
 }
@@ -861,6 +877,300 @@ function ProfilesTab() {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── 내 분석 탭 ─────────────────────────────────────────────────────────
+type AnalysisListItem = {
+  shortcode: string;
+  source_url: string;
+  video_storage_path: string | null;
+  video_expires_at: string | null;
+  title: string | null;
+  video_summary: string | null;
+  product_keywords:
+    | { keyword: string; translation?: string; note?: string }[]
+    | null;
+  model: string | null;
+  analyzed_at: string;
+};
+
+function MyAnalysesTab() {
+  const [items, setItems] = useState<AnalysisListItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [q, setQ] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [openShortcode, setOpenShortcode] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ limit: "100" });
+        if (q.trim()) params.set("q", q.trim());
+        const res = await fetch(`/api/insta-tracker/analyses?${params}`);
+        const json = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setError(json.error || "조회 실패");
+        } else {
+          setItems(json.analyses || []);
+          setTotal(json.total || 0);
+          setError("");
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "조회 실패");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, q ? 300 : 0); // 검색어 있을 때만 debounce
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [q, refreshKey]);
+
+  async function handleDelete(shortcode: string) {
+    if (!confirm("이 분석을 삭제할까요? 저장된 영상도 같이 삭제돼요.")) return;
+    await fetch(
+      `/api/insta-tracker/analyses?shortcode=${encodeURIComponent(shortcode)}`,
+      { method: "DELETE" },
+    );
+    setRefreshKey((k) => k + 1);
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* 검색 바 */}
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 flex flex-wrap items-center gap-3">
+        <input
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="제목/요약/URL 검색"
+          className="flex-1 min-w-[200px] text-sm rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-red-300 dark:focus:ring-red-700"
+        />
+        <span className="text-xs text-zinc-500 shrink-0">
+          {total > 0 ? `총 ${total}개` : ""}
+        </span>
+        <button
+          onClick={() => setRefreshKey((k) => k + 1)}
+          className="text-sm px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 hover:border-red-300 dark:hover:border-red-700"
+        >
+          새로고침
+        </button>
+      </div>
+
+      {error && (
+        <div className="text-sm text-rose-600 dark:text-rose-400">{error}</div>
+      )}
+
+      {loading ? (
+        <div className="text-center py-12 text-zinc-400 text-sm">
+          불러오는 중…
+        </div>
+      ) : items.length === 0 ? (
+        <div className="text-center py-12 text-zinc-400 text-sm">
+          {q
+            ? `"${q}" 와 일치하는 분석이 없어요.`
+            : "아직 저장된 분석이 없어요. 새 피드 탭에서 영상을 분석해보세요."}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {items.map((a) => (
+            <AnalysisListCard
+              key={a.shortcode}
+              a={a}
+              onOpen={() => setOpenShortcode(a.shortcode)}
+              onDelete={() => handleDelete(a.shortcode)}
+            />
+          ))}
+        </div>
+      )}
+
+      {openShortcode && (
+        <AnalysisDetailModal
+          shortcode={openShortcode}
+          onClose={() => setOpenShortcode(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function AnalysisListCard({
+  a,
+  onOpen,
+  onDelete,
+}: {
+  a: AnalysisListItem;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const keywords = (a.product_keywords || []).slice(0, 4);
+  const expired =
+    a.video_expires_at && new Date(a.video_expires_at).getTime() <= Date.now();
+
+  return (
+    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 hover:border-red-300 dark:hover:border-red-700 transition-colors">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <button
+            onClick={onOpen}
+            className="text-left w-full block"
+          >
+            {a.title && (
+              <h3 className="text-base font-bold text-zinc-800 dark:text-zinc-100 line-clamp-1 hover:text-red-500">
+                {a.title}
+              </h3>
+            )}
+            {a.video_summary && (
+              <p className="text-xs text-zinc-500 mt-1 line-clamp-2">
+                {a.video_summary}
+              </p>
+            )}
+          </button>
+
+          {/* 키워드 미리보기 */}
+          {keywords.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap mt-2">
+              {keywords.map((k, i) => (
+                <a
+                  key={i}
+                  href={`https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(k.keyword)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] px-2 py-0.5 rounded bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/40 border border-rose-200 dark:border-rose-900"
+                  title={k.translation ? `${k.translation}${k.note ? ` — ${k.note}` : ""}` : k.note}
+                >
+                  {k.keyword}
+                  {k.translation && (
+                    <span className="opacity-60"> ({k.translation})</span>
+                  )}
+                </a>
+              ))}
+              {(a.product_keywords?.length || 0) > 4 && (
+                <span className="text-[11px] text-zinc-400">
+                  +{(a.product_keywords?.length || 0) - 4}
+                </span>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center gap-3 text-[11px] text-zinc-400 mt-2">
+            <span>{fmtRelTime(a.analyzed_at)}</span>
+            {a.model && <span>· {a.model}</span>}
+            {a.video_storage_path ? (
+              <span className="text-emerald-500">
+                · 영상 저장됨{a.video_expires_at ? ` (만료 ${fmtRelTime(a.video_expires_at)})` : ""}
+              </span>
+            ) : expired ? (
+              <span className="text-zinc-400">· 영상 만료됨</span>
+            ) : null}
+            <a
+              href={a.source_url}
+              target="_blank"
+              rel="noreferrer"
+              className="ml-auto hover:text-red-500"
+            >
+              원본 ↗
+            </a>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1.5 shrink-0">
+          <button
+            onClick={onOpen}
+            className="text-xs px-2.5 py-1 rounded bg-gradient-to-r from-violet-500 to-red-500 text-white font-medium hover:opacity-90"
+          >
+            펼치기
+          </button>
+          <button
+            onClick={onDelete}
+            className="text-[11px] text-zinc-400 hover:text-rose-500"
+          >
+            삭제
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnalysisDetailModal({
+  shortcode,
+  onClose,
+}: {
+  shortcode: string;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/insta-tracker/analyze?shortcode=${encodeURIComponent(shortcode)}`,
+        );
+        const json = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setError(json.error || "조회 실패");
+        } else if (json.analysis) {
+          setAnalysis(json.analysis as Analysis);
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "조회 실패");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [shortcode]);
+
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden"
+      >
+        <div className="flex items-center justify-between p-4 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+          <h2 className="text-sm font-bold">🤖 분석 상세</h2>
+          <button
+            onClick={onClose}
+            className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 text-xl px-2"
+          >
+            ×
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5">
+          {loading ? (
+            <div className="text-center py-10 text-zinc-400 text-sm">
+              불러오는 중…
+            </div>
+          ) : error ? (
+            <div className="text-sm text-rose-500">⚠️ {error}</div>
+          ) : analysis ? (
+            <AnalysisView a={analysis} />
+          ) : (
+            <div className="text-center py-10 text-zinc-400 text-sm">
+              분석 데이터가 없습니다.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
