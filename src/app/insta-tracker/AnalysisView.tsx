@@ -14,7 +14,7 @@ export type Analysis = {
     | { index: number; text: string; emotion: string; durationSec: number }[]
     | null;
   product_keywords:
-    | { keyword: string; lang: "ko" | "zh"; note?: string }[]
+    | { keyword: string; translation?: string; note?: string }[]
     | null;
   model: string | null;
   analyzed_at: string;
@@ -60,11 +60,11 @@ export function AnalysisView({ a }: { a: Analysis }) {
         </section>
       )}
 
-      {/* 샤오홍슈/도우인 검색 키워드 — 가장 위에 두 번째로 노출 */}
+      {/* 샤오홍슈/도우인 검색 키워드 — 중국어로 검색, 한국어 번역 병기 */}
       {keywords.length > 0 && (
         <section>
           <h3 className="text-xs font-semibold text-zinc-500 mb-2">
-            🔍 샤오홍슈/도우인 검색 키워드 — 클릭하면 새 탭에서 바로 검색
+            🔍 샤오홍슈/도우인 검색 키워드 — 中文로 검색돼요
           </h3>
           <div className="space-y-1.5">
             {keywords.map((k, i) => (
@@ -72,26 +72,24 @@ export function AnalysisView({ a }: { a: Analysis }) {
                 key={`${k.keyword}-${i}`}
                 className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2"
               >
-                <span
-                  className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
-                    k.lang === "zh"
-                      ? "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
-                      : "bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
-                  }`}
-                >
-                  {k.lang === "zh" ? "中文" : "한국어"}
-                </span>
-                <span className="text-sm font-medium text-zinc-800 dark:text-zinc-100 truncate flex-1">
-                  {k.keyword}
-                </span>
-                {k.note && (
-                  <span
-                    className="text-[11px] text-zinc-400 truncate max-w-[40%]"
-                    title={k.note}
-                  >
-                    {k.note}
-                  </span>
-                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 truncate">
+                    {k.keyword}
+                    {k.translation && (
+                      <span className="ml-2 text-xs font-normal text-zinc-500">
+                        ({k.translation})
+                      </span>
+                    )}
+                  </div>
+                  {k.note && (
+                    <div
+                      className="text-[11px] text-zinc-400 truncate"
+                      title={k.note}
+                    >
+                      {k.note}
+                    </div>
+                  )}
+                </div>
                 <a
                   href={xhsSearchUrl(k.keyword)}
                   target="_blank"

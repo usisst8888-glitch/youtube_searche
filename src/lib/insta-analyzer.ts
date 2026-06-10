@@ -35,11 +35,11 @@ const ANALYSIS_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          keyword: { type: "string" },
-          lang: { type: "string" }, // 'ko' | 'zh'
-          note: { type: "string" },
+          keyword: { type: "string" },        // 중국어 (简体) — 실제 검색에 사용
+          translation: { type: "string" },    // 한국어 번역 (참고 표시용)
+          note: { type: "string" },           // 왜 골랐는지 (선택)
         },
-        required: ["keyword", "lang"],
+        required: ["keyword", "translation"],
       },
     },
   },
@@ -87,14 +87,15 @@ ${captionHint ? `## 인스타 caption (참고만 — 영상 내용이 우선):\n
 - 씬 1~3 끝은 cliffhanger, 씬 4는 반전 종료 (CTA 금지).
 - storyPremise: 4단계를 어떻게 풀지 2~3줄 요체.
 
-## 5) productKeywords — 샤오홍슈/도우인 검색용 키워드 (가장 중요)
-- 이 영상에 나오는 **제품/제품군/소재**를 식별하고, 중국 플랫폼에서 비슷한 영상을 찾을 수 있는 검색어를 뽑을 것.
-- 한국어 키워드 **3개** + 중국어(简体) 키워드 **3개**, 총 6개.
-- 너무 일반적(예: "화장품")이면 ❌. 구체적인 제품군/카테고리/특징어로:
-  - 예) "리들샷 앰플", "더모 글로우 토너", "보들레이 베이지 립", "鸭嘴夹 美甲", "椭圆刷 高光"
+## 5) productKeywords — 샤오홍슈/도우인 검색용 중국어 키워드 (가장 중요)
+- 이 영상에 나오는 **제품/제품군/소재**를 식별하고, **중국 플랫폼(샤오홍슈/도우인)에서 비슷한 영상을 찾을 수 있는 中文 검색어**를 뽑을 것.
+- **반드시 6개**, 전부 **简体 中文(중국어)** — 실제 검색은 중국어로만 들어감.
+- 너무 일반적(예: "化妆品")이면 ❌. 구체적인 제품군/카테고리/특징어로:
+  - 예) "鸭嘴夹 美甲", "椭圆刷 高光", "玻尿酸 安瓶", "胶原蛋白 面膜", "唇釉 雾面", "防晒喷雾 物理"
+- 각 키워드마다 **translation 필드에 한국어 번역**도 같이 적을 것 (사용자가 무슨 뜻인지 알 수 있게).
+  - 예) keyword="鸭嘴夹 美甲", translation="오리주둥이 클립 네일"
 - note 필드에는 왜 이 키워드를 골랐는지 짧게 (선택).
-- lang: 'ko' 또는 'zh'.
-- 한국어 키워드는 한국어로, 중국어 키워드는 简体 中文로.
+- keyword에는 **무조건 中文만** — 한국어 절대 금지. 한국어는 translation에만.
 
 ## 출력 JSON 키
 transcript, videoSummary, videoTitle, storyPremise, newScenes, productKeywords`;
@@ -124,7 +125,7 @@ export type AnalysisResult = {
     emotion: string;
     durationSec: number;
   }[];
-  productKeywords: { keyword: string; lang: "ko" | "zh"; note?: string }[];
+  productKeywords: { keyword: string; translation: string; note?: string }[];
   model: string;
 };
 
@@ -198,7 +199,11 @@ export async function analyzeInstaVideoFromBuffer(
       emotion?: string;
       durationSec?: number;
     }[];
-    productKeywords?: { keyword?: string; lang?: string; note?: string }[];
+    productKeywords?: {
+      keyword?: string;
+      translation?: string;
+      note?: string;
+    }[];
   };
 
   const scenes = (parsed.newScenes || []).map((sc, i) => ({
@@ -211,7 +216,7 @@ export async function analyzeInstaVideoFromBuffer(
   const keywords = (parsed.productKeywords || [])
     .map((k) => ({
       keyword: (k.keyword || "").trim(),
-      lang: (k.lang === "zh" ? "zh" : "ko") as "ko" | "zh",
+      translation: (k.translation || "").trim(),
       note: k.note,
     }))
     .filter((k) => k.keyword.length > 0);
